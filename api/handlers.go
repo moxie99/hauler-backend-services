@@ -170,6 +170,10 @@ func DriverRegister(c *gin.Context) {
 		return
 	}
 
+	// Explicitly set IsActive to false after creation to ensure it's saved correctly
+	// This handles cases where database default might override the struct value
+	DB.Model(&user).Update("is_active", false)
+
 	// Generate verification code
 	code := GenerateVerificationCode()
 	expiresAt := time.Now().Add(15 * time.Minute) // Code expires in 15 minutes
@@ -429,6 +433,130 @@ func ResetPassword(c *gin.Context) {
 	}
 
 	ResponseJSON(c, http.StatusOK, "Password reset successfully", nil)
+}
+
+// ResendDriverVerificationCode resends the email verification code for driver sign-up.
+// This is useful when the code expires or the driver didn't receive it.
+func ResendDriverVerificationCode(c *gin.Context) {
+	var req ResendCodeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Invalid request payload: "+err.Error(), nil)
+		return
+	}
+
+	// Check if user exists and refresh from database to get latest state
+	var user User
+	if err := DB.Where("email = ?", req.Email).First(&user).Error; err != nil {
+		ResponseJSON(c, http.StatusNotFound, "Email does not exist", nil)
+		return
+	}
+
+	// Refresh user from database to ensure we have the latest IsActive status
+	DB.First(&user, user.ID)
+
+	// Check if user is a driver
+	if user.Role != RoleDriver {
+		ResponseJSON(c, http.StatusBadRequest, "This endpoint is only for driver verification", nil)
+		return
+	}
+
+	// Check if user is already verified (active)
+	// If IsActive is true, the email has been verified
+	if user.IsActive {
+		ResponseJSON(c, http.StatusBadRequest, "Email is already verified", nil)
+		return
+	}
+
+	// If user is not active, they can resend the verification code
+	// This handles cases where the user hasn't verified yet or needs a new code
+
+	// Generate new verification code
+	code := GenerateVerificationCode()
+	expiresAt := time.Now().Add(15 * time.Minute) // Code expires in 15 minutes
+
+	// Invalidate any existing unused verification codes for this email
+	DB.Model(&VerificationCode{}).Where("email = ? AND used = ?", req.Email, false).Update("used", true)
+
+	// Create new verification code record
+	verificationCode := VerificationCode{
+		Email:     req.Email,
+		Code:      code,
+		ExpiresAt: expiresAt,
+		Used:      false,
+	}
+
+	if err := DB.Create(&verificationCode).Error; err != nil {
+		log.Printf("Failed to create verification code: %v", err)
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to generate verification code", nil)
+		return
+	}
+
+	// Send verification code via email
+	emailService := NewEmailService()
+	if err := emailService.SendVerificationCode(req.Email, code); err != nil {
+		log.Printf("Failed to send verification email: %v", err)
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to send verification email", nil)
+		return
+	}
+
+	ResponseJSON(c, http.StatusOK, "Verification code has been resent to your email", nil)
+}
+
+// ResendForgotPasswordCode resends the password reset verification code.
+// This is useful when the code expires or the user didn't receive it.
+func ResendForgotPasswordCode(c *gin.Context) {
+	var req ResendCodeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Invalid request payload: "+err.Error(), nil)
+		return
+	}
+
+	// Check if user exists and refresh from database to get latest state
+	var user User
+	if err := DB.Where("email = ?", req.Email).First(&user).Error; err != nil {
+		ResponseJSON(c, http.StatusNotFound, "Email does not exist", nil)
+		return
+	}
+
+	// Refresh user from database to ensure we have the latest IsActive status
+	DB.First(&user, user.ID)
+
+	// Check if user is active
+	if !user.IsActive {
+		ResponseJSON(c, http.StatusForbidden, "Account is deactivated", nil)
+		return
+	}
+
+	// Generate new verification code
+	code := GenerateVerificationCode()
+	expiresAt := time.Now().Add(15 * time.Minute) // Code expires in 15 minutes
+
+	// Invalidate any existing unused verification codes for this email
+	DB.Model(&VerificationCode{}).Where("email = ? AND used = ?", req.Email, false).Update("used", true)
+
+	// Create new verification code record
+	verificationCode := VerificationCode{
+		Email:     req.Email,
+		Code:      code,
+		ExpiresAt: expiresAt,
+		Used:      false,
+	}
+
+	if err := DB.Create(&verificationCode).Error; err != nil {
+		log.Printf("Failed to create verification code: %v", err)
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to generate verification code", nil)
+		return
+	}
+
+	// Send verification code via email
+	emailService := NewEmailService()
+	if err := emailService.SendPasswordResetCode(req.Email, code); err != nil {
+		log.Printf("Failed to send password reset email: %v", err)
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to send password reset email", nil)
+		return
+	}
+
+	ResponseJSON(c, http.StatusOK, "Password reset code has been resent to your email", nil)
 }
 
 var DB *gorm.DB

@@ -17,11 +17,13 @@ func main() {
 	// Driver registration and verification
 	r.POST("/api/driver/register", api.DriverRegister)
 	r.POST("/api/driver/verify-email", api.VerifyEmail)
+	r.POST("/api/driver/resend-verification-code", api.ResendDriverVerificationCode)
 
 	// Password reset flow
 	r.POST("/api/auth/forgot-password", api.ForgotPassword)
 	r.POST("/api/auth/verify-forgot-password", api.VerifyForgotPasswordCode)
 	r.POST("/api/auth/reset-password", api.ResetPassword)
+	r.POST("/api/auth/resend-forgot-password-code", api.ResendForgotPasswordCode)
 
 	// Protected routes - User profile
 	protected := r.Group("/api", api.JWTAuthMiddleware())

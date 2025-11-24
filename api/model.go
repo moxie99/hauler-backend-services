@@ -116,6 +116,11 @@ type ResetPasswordRequest struct {
 	NewPassword string `json:"new_password" binding:"required"`
 }
 
+// ResendCodeRequest represents a resend verification code request payload
+type ResendCodeRequest struct {
+	Email string `json:"email" binding:"required,email"`
+}
+
 // ResponseJSON sends a standardized JSON response
 func ResponseJSON(c *gin.Context, status int, message string, data any) {
 	response := JsonResponse{
