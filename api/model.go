@@ -18,6 +18,16 @@ const (
 	RoleCustomer   UserRole = "customer"
 )
 
+// KYCStatus represents the KYC verification status
+type KYCStatus string
+
+const (
+	KYCStatusPending   KYCStatus = "pending"   // Email verified but KYC not started
+	KYCStatusInProgress KYCStatus = "in_progress" // KYC documents uploaded, under review
+	KYCStatusApproved  KYCStatus = "approved"  // KYC approved, registration complete
+	KYCStatusRejected  KYCStatus = "rejected"  // KYC rejected
+)
+
 // User represents a user in the haulage system
 type User struct {
 	ID        uint           `json:"id" gorm:"primaryKey"`
@@ -28,6 +38,7 @@ type User struct {
 	Phone     string         `json:"phone" binding:"required,min=10,max=20"`
 	Role      UserRole       `json:"role" gorm:"type:varchar(20);not null;default:'customer'"`
 	IsActive  bool           `json:"is_active" gorm:"default:true"`
+	KYCStatus KYCStatus      `json:"kyc_status" gorm:"type:varchar(20);default:null"` // Only for drivers
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`
 	DeletedAt gorm.DeletedAt `json:"-" gorm:"index"`
@@ -119,6 +130,11 @@ type ResetPasswordRequest struct {
 // ResendCodeRequest represents a resend verification code request payload
 type ResendCodeRequest struct {
 	Email string `json:"email" binding:"required,email"`
+}
+
+// UpdateKYCStatusRequest represents a KYC status update request payload
+type UpdateKYCStatusRequest struct {
+	Status KYCStatus `json:"status" binding:"required,oneof=pending in_progress approved rejected"`
 }
 
 // ResponseJSON sends a standardized JSON response

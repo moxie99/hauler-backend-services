@@ -29,6 +29,9 @@ func main() {
 	protected := r.Group("/api", api.JWTAuthMiddleware())
 	{
 		protected.GET("/profile", api.GetProfile)
+		// KYC management
+		protected.PUT("/driver/kyc-status", api.UpdateKYCStatus)                    // Driver updates own KYC
+		protected.PUT("/driver/kyc-status/:id", api.UpdateKYCStatus)                // Admin updates driver KYC
 	}
 
 	// Admin routes

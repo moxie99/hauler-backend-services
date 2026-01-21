@@ -6,6 +6,7 @@ It includes functionality for user authentication, role-based access control, an
 package api
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -90,15 +91,49 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	// Check if user is active
-	if !user.IsActive {
-		ResponseJSON(c, http.StatusForbidden, "Account is deactivated", nil)
+	// Verify password first
+	if !user.CheckPassword(loginRequest.Password) {
+		ResponseJSON(c, http.StatusUnauthorized, "Invalid email or password", nil)
 		return
 	}
 
-	// Verify password
-	if !user.CheckPassword(loginRequest.Password) {
-		ResponseJSON(c, http.StatusUnauthorized, "Invalid email or password", nil)
+	// For drivers: Check if email is verified
+	if user.Role == RoleDriver && !user.IsActive {
+		// Driver hasn't verified email - send verification code and return message
+		code := GenerateVerificationCode()
+		expiresAt := time.Now().Add(15 * time.Minute)
+
+		// Invalidate any existing unused verification codes
+		DB.Model(&VerificationCode{}).Where("email = ? AND used = ?", user.Email, false).Update("used", true)
+
+		// Create new verification code
+		verificationCode := VerificationCode{
+			Email:     user.Email,
+			Code:      code,
+			ExpiresAt: expiresAt,
+			Used:      false,
+		}
+
+		if err := DB.Create(&verificationCode).Error; err != nil {
+			log.Printf("Failed to create verification code: %v", err)
+		} else {
+			// Send verification code via email
+			emailService := NewEmailService()
+			if err := emailService.SendVerificationCode(user.Email, code); err != nil {
+				log.Printf("Failed to send verification email: %v", err)
+			}
+		}
+
+		ResponseJSON(c, http.StatusForbidden, "Please verify your email address. A verification code has been sent to your email", gin.H{
+			"requires_verification": true,
+			"email":                user.Email,
+		})
+		return
+	}
+
+	// Check if user is active (for non-drivers or verified drivers)
+	if !user.IsActive {
+		ResponseJSON(c, http.StatusForbidden, "Account is deactivated", nil)
 		return
 	}
 
@@ -119,10 +154,47 @@ func Login(c *gin.Context) {
 
 	// Don't return password in response
 	user.Password = ""
-	ResponseJSON(c, http.StatusOK, "Login successful", gin.H{
+	
+	// Prepare response data
+	responseData := gin.H{
 		"token": tokenString,
 		"user":  user,
-	})
+	}
+	
+	// For drivers, check KYC status and include in response
+	if user.Role == RoleDriver {
+		// Set default KYC status if not set
+		if user.KYCStatus == "" {
+			user.KYCStatus = KYCStatusPending
+		}
+		
+		responseData["kyc_status"] = user.KYCStatus
+		
+		// Check if KYC is not approved
+		if user.KYCStatus != KYCStatusApproved {
+			responseData["requires_kyc"] = true
+			responseData["kyc_completed"] = false
+			
+			// Set appropriate message based on KYC status
+			var kycMessage string
+			switch user.KYCStatus {
+			case KYCStatusPending:
+				kycMessage = "Please complete your KYC verification to continue"
+			case KYCStatusInProgress:
+				kycMessage = "Your KYC documents are under review"
+			case KYCStatusRejected:
+				kycMessage = "Your KYC verification was rejected. Please contact support"
+			default:
+				kycMessage = "Please complete your KYC verification to continue"
+			}
+			responseData["kyc_message"] = kycMessage
+		} else {
+			responseData["requires_kyc"] = false
+			responseData["kyc_completed"] = true
+		}
+	}
+	
+	ResponseJSON(c, http.StatusOK, "Login successful", responseData)
 }
 
 // DriverRegister handles driver registration with email verification.
@@ -247,6 +319,12 @@ func VerifyEmail(c *gin.Context) {
 
 	// Activate the user account
 	user.IsActive = true
+	
+	// For drivers, set KYC status to pending after email verification
+	if user.Role == RoleDriver {
+		user.KYCStatus = KYCStatusPending
+	}
+	
 	if err := DB.Save(&user).Error; err != nil {
 		ResponseJSON(c, http.StatusInternalServerError, "Failed to activate account", nil)
 		return
@@ -605,6 +683,103 @@ func GetProfile(c *gin.Context) {
 
 	user.Password = ""
 	ResponseJSON(c, http.StatusOK, "Profile retrieved successfully", user)
+}
+
+// UpdateKYCStatus updates the KYC status for a driver.
+// Drivers can set their own status to "in_progress" when submitting documents.
+// Admins can update any driver's status to "approved" or "rejected" after review.
+func UpdateKYCStatus(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		ResponseJSON(c, http.StatusUnauthorized, "User not authenticated", nil)
+		return
+	}
+
+	role, exists := c.Get("role")
+	if !exists {
+		ResponseJSON(c, http.StatusUnauthorized, "User role not found", nil)
+		return
+	}
+
+	var req UpdateKYCStatusRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Invalid request payload: "+err.Error(), nil)
+		return
+	}
+
+	// Get the current user
+	var currentUser User
+	if err := DB.First(&currentUser, userID).Error; err != nil {
+		ResponseJSON(c, http.StatusNotFound, "User not found", nil)
+		return
+	}
+
+	// Check if trying to update own KYC or another user's KYC
+	targetUserID := userID.(uint)
+	if targetIDParam := c.Param("id"); targetIDParam != "" {
+		// Admin trying to update another user's KYC
+		userRole := UserRole(role.(string))
+		if userRole != RoleAdmin && userRole != RoleSuperAdmin {
+			ResponseJSON(c, http.StatusForbidden, "Only admins can update other users' KYC status", nil)
+			return
+		}
+		// Parse target user ID from param
+		var targetID uint
+		if _, err := fmt.Sscanf(targetIDParam, "%d", &targetID); err != nil {
+			ResponseJSON(c, http.StatusBadRequest, "Invalid user ID", nil)
+			return
+		}
+		targetUserID = targetID
+	}
+
+	// Get the target user
+	var targetUser User
+	if err := DB.First(&targetUser, targetUserID).Error; err != nil {
+		ResponseJSON(c, http.StatusNotFound, "Target user not found", nil)
+		return
+	}
+
+	// Verify target user is a driver
+	if targetUser.Role != RoleDriver {
+		ResponseJSON(c, http.StatusBadRequest, "KYC status can only be updated for drivers", nil)
+		return
+	}
+
+	// Check permissions based on role
+	userRole := UserRole(role.(string))
+	
+	// Drivers can only set their own status to "in_progress"
+	if userRole == RoleDriver {
+		if targetUserID != userID.(uint) {
+			ResponseJSON(c, http.StatusForbidden, "You can only update your own KYC status", nil)
+			return
+		}
+		if req.Status != KYCStatusInProgress {
+			ResponseJSON(c, http.StatusForbidden, "Drivers can only set KYC status to 'in_progress'", nil)
+			return
+		}
+	}
+
+	// Admins can set status to approved or rejected
+	if userRole == RoleAdmin || userRole == RoleSuperAdmin {
+		if req.Status != KYCStatusApproved && req.Status != KYCStatusRejected {
+			ResponseJSON(c, http.StatusBadRequest, "Admins can only set KYC status to 'approved' or 'rejected'", nil)
+			return
+		}
+	}
+
+	// Update KYC status
+	targetUser.KYCStatus = req.Status
+	if err := DB.Save(&targetUser).Error; err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to update KYC status", nil)
+		return
+	}
+
+	targetUser.Password = ""
+	ResponseJSON(c, http.StatusOK, "KYC status updated successfully", gin.H{
+		"user":       targetUser,
+		"kyc_status": targetUser.KYCStatus,
+	})
 }
 
 // createDefaultSuperAdmin creates a default super admin user if none exists.
