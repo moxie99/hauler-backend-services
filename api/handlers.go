@@ -642,29 +642,34 @@ var DB *gorm.DB
 // InitDB initializes the database connection using environment variables.
 // It loads the database configuration from a .env file and migrates the User schema.
 func InitDB() {
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal("Failed to load environment variables:", err)
-	}
+    // Load .env ONLY in local development
+    if os.Getenv("RENDER") == "" {
+        _ = godotenv.Load()
+    }
 
 	dsn := os.Getenv("DB_URL")
 	if dsn == "" {
-		log.Fatal("DB_URL environment variable is required")
+    	dsn = os.Getenv("DATABASE_URL")
 	}
-
-	DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
-	if err != nil {
-		log.Fatal("Failed to connect to database:", err)
+	if dsn == "" {
+    log.Fatal("DB_URL or DATABASE_URL environment variable is required")
 	}
+   
 
-	// Migrate the schema
-	if err := DB.AutoMigrate(&User{}, &VerificationCode{}); err != nil {
-		log.Fatal("Failed to migrate schema:", err)
-	}
+    DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
+    if err != nil {
+        log.Fatal("Failed to connect to database:", err)
+    }
 
-	// Create default super admin if it doesn't exist
-	createDefaultSuperAdmin()
+    // Migrate the schema
+    if err := DB.AutoMigrate(&User{}, &VerificationCode{}); err != nil {
+        log.Fatal("Failed to migrate schema:", err)
+    }
+
+    // Create default super admin if it doesn't exist
+    createDefaultSuperAdmin()
 }
+
 
 // GetProfile retrieves the current user's profile information.
 // It requires authentication via JWT middleware.
