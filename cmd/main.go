@@ -2,6 +2,7 @@ package main
 
 import (
 	"hauler-backend-services/api"
+	"os"
 
 	"github.com/gin-gonic/gin"
 )
@@ -42,5 +43,9 @@ func main() {
 	_ = r.Group("/api/super-admin", api.JWTAuthMiddleware(), api.RequireSuperAdmin())
 	// Super admin-specific routes will be added here
 
-	r.Run(":8080")
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	r.Run(":" + port)
 }
