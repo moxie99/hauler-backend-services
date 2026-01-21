@@ -126,7 +126,7 @@ func Login(c *gin.Context) {
 
 		ResponseJSON(c, http.StatusForbidden, "Please verify your email address. A verification code has been sent to your email", gin.H{
 			"requires_verification": true,
-			"email":                user.Email,
+			"email":                 user.Email,
 		})
 		return
 	}
@@ -154,27 +154,27 @@ func Login(c *gin.Context) {
 
 	// Don't return password in response
 	user.Password = ""
-	
+
 	// Prepare response data
 	responseData := gin.H{
 		"token": tokenString,
 		"user":  user,
 	}
-	
+
 	// For drivers, check KYC status and include in response
 	if user.Role == RoleDriver {
 		// Set default KYC status if not set
 		if user.KYCStatus == "" {
 			user.KYCStatus = KYCStatusPending
 		}
-		
+
 		responseData["kyc_status"] = user.KYCStatus
-		
+
 		// Check if KYC is not approved
 		if user.KYCStatus != KYCStatusApproved {
 			responseData["requires_kyc"] = true
 			responseData["kyc_completed"] = false
-			
+
 			// Set appropriate message based on KYC status
 			var kycMessage string
 			switch user.KYCStatus {
@@ -193,7 +193,7 @@ func Login(c *gin.Context) {
 			responseData["kyc_completed"] = true
 		}
 	}
-	
+
 	ResponseJSON(c, http.StatusOK, "Login successful", responseData)
 }
 
@@ -319,12 +319,12 @@ func VerifyEmail(c *gin.Context) {
 
 	// Activate the user account
 	user.IsActive = true
-	
+
 	// For drivers, set KYC status to pending after email verification
 	if user.Role == RoleDriver {
 		user.KYCStatus = KYCStatusPending
 	}
-	
+
 	if err := DB.Save(&user).Error; err != nil {
 		ResponseJSON(c, http.StatusInternalServerError, "Failed to activate account", nil)
 		return
@@ -641,35 +641,35 @@ var DB *gorm.DB
 
 // InitDB initializes the database connection using environment variables.
 // It loads the database configuration from a .env file and migrates the User schema.
+
 func InitDB() {
-    // Load .env ONLY in local development
-    if os.Getenv("RENDER") == "" {
-        _ = godotenv.Load()
-    }
+	// Load .env ONLY in local development
+	if os.Getenv("RENDER") == "" {
+		_ = godotenv.Load()
+	}
 
 	dsn := os.Getenv("DB_URL")
 	if dsn == "" {
-    	dsn = os.Getenv("DATABASE_URL")
+		dsn = os.Getenv("DATABASE_URL")
 	}
 	if dsn == "" {
-    log.Fatal("DB_URL or DATABASE_URL environment variable is required")
+		log.Fatal("DB_URL or DATABASE_URL environment variable is required")
 	}
-   
 
-    DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
-    if err != nil {
-        log.Fatal("Failed to connect to database:", err)
-    }
+	var err error
+	DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	if err != nil {
+		log.Fatal("Failed to connect to database:", err)
+	}
 
-    // Migrate the schema
-    if err := DB.AutoMigrate(&User{}, &VerificationCode{}); err != nil {
-        log.Fatal("Failed to migrate schema:", err)
-    }
+	// Migrate the schema
+	if err = DB.AutoMigrate(&User{}, &VerificationCode{}); err != nil {
+		log.Fatal("Failed to migrate schema:", err)
+	}
 
-    // Create default super admin if it doesn't exist
-    createDefaultSuperAdmin()
+	// Create default super admin if it doesn't exist
+	createDefaultSuperAdmin()
 }
-
 
 // GetProfile retrieves the current user's profile information.
 // It requires authentication via JWT middleware.
@@ -752,7 +752,7 @@ func UpdateKYCStatus(c *gin.Context) {
 
 	// Check permissions based on role
 	userRole := UserRole(role.(string))
-	
+
 	// Drivers can only set their own status to "in_progress"
 	if userRole == RoleDriver {
 		if targetUserID != userID.(uint) {
