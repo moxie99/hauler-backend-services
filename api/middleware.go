@@ -50,14 +50,37 @@ func JWTAuthMiddleware() gin.HandlerFunc {
 		// Extract claims
 		if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
 			// Store user information in context
-			if userID, ok := claims["user_id"].(float64); ok {
-				c.Set("user_id", uint(userID))
+			var userID uint
+			if uid, ok := claims["user_id"].(float64); ok {
+				userID = uint(uid)
+				c.Set("user_id", userID)
 			}
 			if email, ok := claims["email"].(string); ok {
 				c.Set("email", email)
 			}
 			if role, ok := claims["role"].(string); ok {
 				c.Set("role", role)
+			}
+
+			// Verify token version against database to support session invalidation
+			if userID > 0 {
+				var user User
+				if err := DB.First(&user, userID).Error; err != nil {
+					ResponseJSON(c, http.StatusUnauthorized, "User not found", nil)
+					c.Abort()
+					return
+				}
+
+				tokenVersion := uint(0)
+				if tv, ok := claims["token_version"].(float64); ok {
+					tokenVersion = uint(tv)
+				}
+
+				if tokenVersion != user.TokenVersion {
+					ResponseJSON(c, http.StatusUnauthorized, "Token has been invalidated. Please login again", nil)
+					c.Abort()
+					return
+				}
 			}
 		} else {
 			ResponseJSON(c, http.StatusUnauthorized, "Invalid token claims", nil)

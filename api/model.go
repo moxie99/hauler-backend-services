@@ -22,26 +22,37 @@ const (
 type KYCStatus string
 
 const (
-	KYCStatusPending   KYCStatus = "pending"   // Email verified but KYC not started
+	KYCStatusPending    KYCStatus = "pending"     // Email verified but KYC not started
 	KYCStatusInProgress KYCStatus = "in_progress" // KYC documents uploaded, under review
-	KYCStatusApproved  KYCStatus = "approved"  // KYC approved, registration complete
-	KYCStatusRejected  KYCStatus = "rejected"  // KYC rejected
+	KYCStatusApproved   KYCStatus = "approved"    // KYC approved, registration complete
+	KYCStatusRejected   KYCStatus = "rejected"    // KYC rejected
+)
+
+// VerificationCodePurpose represents the purpose of a verification code
+type VerificationCodePurpose string
+
+const (
+	PurposeEmailVerification VerificationCodePurpose = "email_verification"
+	PurposePasswordReset     VerificationCodePurpose = "password_reset"
+	PurposeLoginOTP          VerificationCodePurpose = "login_otp"
+	PurposeChangePassword    VerificationCodePurpose = "change_password"
 )
 
 // User represents a user in the haulage system
 type User struct {
-	ID        uint           `json:"id" gorm:"primaryKey"`
-	Email     string         `json:"email" gorm:"uniqueIndex;not null" binding:"required,email"`
-	Password  string         `json:"-" gorm:"not null" binding:"required,min=6"`
-	FirstName string         `json:"first_name" binding:"required,min=1,max=100"`
-	LastName  string         `json:"last_name" binding:"required,min=1,max=100"`
-	Phone     string         `json:"phone" binding:"required,min=10,max=20"`
-	Role      UserRole       `json:"role" gorm:"type:varchar(20);not null;default:'customer'"`
-	IsActive  bool           `json:"is_active" gorm:"default:true"`
-	KYCStatus KYCStatus      `json:"kyc_status" gorm:"type:varchar(20);default:null"` // Only for drivers
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	DeletedAt gorm.DeletedAt `json:"-" gorm:"index"`
+	ID           uint           `json:"id" gorm:"primaryKey"`
+	Email        string         `json:"email" gorm:"uniqueIndex;not null" binding:"required,email"`
+	Password     string         `json:"-" gorm:"not null" binding:"required,min=6"`
+	FirstName    string         `json:"first_name" binding:"required,min=1,max=100"`
+	LastName     string         `json:"last_name" binding:"required,min=1,max=100"`
+	Phone        string         `json:"phone" binding:"required,min=10,max=20"`
+	Role         UserRole       `json:"role" gorm:"type:varchar(20);not null;default:'customer'"`
+	IsActive     bool           `json:"is_active" gorm:"default:true"`
+	KYCStatus    KYCStatus      `json:"kyc_status" gorm:"type:varchar(20);default:null"` // Only for drivers
+	TokenVersion uint           `json:"-" gorm:"default:0"`
+	CreatedAt    time.Time      `json:"created_at"`
+	UpdatedAt    time.Time      `json:"updated_at"`
+	DeletedAt    gorm.DeletedAt `json:"-" gorm:"index"`
 }
 
 // BeforeCreate is a GORM hook that hashes the password before creating a user
@@ -85,13 +96,14 @@ type RegisterRequest struct {
 
 // VerificationCode represents an email verification code
 type VerificationCode struct {
-	ID        uint      `json:"id" gorm:"primaryKey"`
-	Email     string    `json:"email" gorm:"not null;index"`
-	Code      string    `json:"code" gorm:"not null;index"`
-	ExpiresAt time.Time `json:"expires_at" gorm:"not null"`
-	Used      bool      `json:"used" gorm:"default:false"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        uint                    `json:"id" gorm:"primaryKey"`
+	Email     string                  `json:"email" gorm:"not null;index"`
+	Code      string                  `json:"code" gorm:"not null;index"`
+	Purpose   VerificationCodePurpose `json:"purpose" gorm:"type:varchar(30);not null;default:'email_verification'"`
+	ExpiresAt time.Time               `json:"expires_at" gorm:"not null"`
+	Used      bool                    `json:"used" gorm:"default:false"`
+	CreatedAt time.Time               `json:"created_at"`
+	UpdatedAt time.Time               `json:"updated_at"`
 }
 
 // DriverRegisterRequest represents a driver registration request payload
@@ -135,6 +147,28 @@ type ResendCodeRequest struct {
 // UpdateKYCStatusRequest represents a KYC status update request payload
 type UpdateKYCStatusRequest struct {
 	Status KYCStatus `json:"status" binding:"required,oneof=pending in_progress approved rejected"`
+}
+
+// VerifyLoginOTPRequest represents a login OTP verification request payload
+type VerifyLoginOTPRequest struct {
+	Email string `json:"email" binding:"required,email"`
+	Code  string `json:"code" binding:"required,min=4,max=10"`
+}
+
+// CreateAdminRequest represents a request to create an admin user
+type CreateAdminRequest struct {
+	Email     string `json:"email" binding:"required,email"`
+	Password  string `json:"password" binding:"required,min=6"`
+	FirstName string `json:"first_name" binding:"required,min=1,max=100"`
+	LastName  string `json:"last_name" binding:"required,min=1,max=100"`
+	Phone     string `json:"phone" binding:"required,min=10,max=20"`
+}
+
+// ChangePasswordRequest represents a change password request payload
+type ChangePasswordRequest struct {
+	Code        string `json:"code" binding:"required,min=4,max=10"`
+	OldPassword string `json:"old_password" binding:"required"`
+	NewPassword string `json:"new_password" binding:"required,min=6"`
 }
 
 // ResponseJSON sends a standardized JSON response

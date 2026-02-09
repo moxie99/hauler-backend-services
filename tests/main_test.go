@@ -48,7 +48,7 @@ func setupTestDB() {
 		panic("failed to connect test database: " + err.Error() +
 			"\nNote: SQLite driver requires CGO. Set CGO_ENABLED=1 and ensure you have a C compiler installed.")
 	}
-	if err := api.DB.AutoMigrate(&api.User{}); err != nil {
+	if err := api.DB.AutoMigrate(&api.User{}, &api.VerificationCode{}); err != nil {
 		panic("failed to migrate test database: " + err.Error())
 	}
 }
@@ -70,10 +70,11 @@ func createTestUser(email, password, firstName, lastName, phone string, role api
 func generateValidToken(userID uint, email string, role api.UserRole) string {
 	expirationTime := time.Now().Add(24 * time.Hour)
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"user_id": float64(userID),
-		"email":   email,
-		"role":    string(role),
-		"exp":     expirationTime.Unix(),
+		"user_id":       float64(userID),
+		"email":         email,
+		"role":          string(role),
+		"token_version": float64(0),
+		"exp":           expirationTime.Unix(),
 	})
 	tokenString, _ := token.SignedString(jwtSecret)
 	return tokenString
@@ -99,7 +100,7 @@ func TestRegister(t *testing.T) {
 
 	registerRequest := api.RegisterRequest{
 		Email:     "test@example.com",
-		Password:  "password123",
+		Password:  "Password@123",
 		FirstName: "John",
 		LastName:  "Doe",
 		Phone:     "+1234567890",
@@ -144,7 +145,7 @@ func TestRegisterDuplicateEmail(t *testing.T) {
 
 	registerRequest := api.RegisterRequest{
 		Email:     "test@example.com",
-		Password:  "password123",
+		Password:  "Password@123",
 		FirstName: "Jane",
 		LastName:  "Doe",
 		Phone:     "+1234567891",
@@ -177,7 +178,7 @@ func TestRegisterDefaultRole(t *testing.T) {
 
 	registerRequest := api.RegisterRequest{
 		Email:     "test2@example.com",
-		Password:  "password123",
+		Password:  "Password@123",
 		FirstName: "John",
 		LastName:  "Doe",
 		Phone:     "+1234567890",

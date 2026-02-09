@@ -97,19 +97,61 @@ func Login(c *gin.Context) {
 		return
 	}
 
+	// For super admins: require OTP verification before login
+	if user.Role == RoleSuperAdmin {
+		if !user.IsActive {
+			ResponseJSON(c, http.StatusForbidden, "Account is deactivated", nil)
+			return
+		}
+
+		code := GenerateVerificationCode()
+		expiresAt := time.Now().Add(15 * time.Minute)
+
+		// Invalidate any existing login OTP codes
+		DB.Model(&VerificationCode{}).Where("email = ? AND used = ? AND purpose = ?", user.Email, false, PurposeLoginOTP).Update("used", true)
+
+		verificationCode := VerificationCode{
+			Email:     user.Email,
+			Code:      code,
+			Purpose:   PurposeLoginOTP,
+			ExpiresAt: expiresAt,
+			Used:      false,
+		}
+
+		if err := DB.Create(&verificationCode).Error; err != nil {
+			log.Printf("Failed to create login OTP: %v", err)
+			ResponseJSON(c, http.StatusInternalServerError, "Failed to generate login verification code", nil)
+			return
+		}
+
+		emailService := NewEmailService()
+		if err := emailService.SendLoginOTP(user.Email, code); err != nil {
+			log.Printf("Failed to send login OTP email: %v", err)
+			ResponseJSON(c, http.StatusInternalServerError, "Failed to send login verification code", nil)
+			return
+		}
+
+		ResponseJSON(c, http.StatusOK, "Login verification code sent to your email", gin.H{
+			"requires_otp": true,
+			"email":        user.Email,
+		})
+		return
+	}
+
 	// For drivers: Check if email is verified
 	if user.Role == RoleDriver && !user.IsActive {
 		// Driver hasn't verified email - send verification code and return message
 		code := GenerateVerificationCode()
 		expiresAt := time.Now().Add(15 * time.Minute)
 
-		// Invalidate any existing unused verification codes
-		DB.Model(&VerificationCode{}).Where("email = ? AND used = ?", user.Email, false).Update("used", true)
+		// Invalidate any existing unused email verification codes
+		DB.Model(&VerificationCode{}).Where("email = ? AND used = ? AND purpose = ?", user.Email, false, PurposeEmailVerification).Update("used", true)
 
 		// Create new verification code
 		verificationCode := VerificationCode{
 			Email:     user.Email,
 			Code:      code,
+			Purpose:   PurposeEmailVerification,
 			ExpiresAt: expiresAt,
 			Used:      false,
 		}
@@ -140,10 +182,11 @@ func Login(c *gin.Context) {
 	// Generate JWT token
 	expirationTime := time.Now().Add(24 * time.Hour) // 24 hour expiration
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"user_id": user.ID,
-		"email":   user.Email,
-		"role":    string(user.Role),
-		"exp":     expirationTime.Unix(),
+		"user_id":       user.ID,
+		"email":         user.Email,
+		"role":          string(user.Role),
+		"token_version": user.TokenVersion,
+		"exp":           expirationTime.Unix(),
 	})
 
 	tokenString, err := token.SignedString(jwtSecret)
@@ -250,13 +293,14 @@ func DriverRegister(c *gin.Context) {
 	code := GenerateVerificationCode()
 	expiresAt := time.Now().Add(15 * time.Minute) // Code expires in 15 minutes
 
-	// Invalidate any existing verification codes for this email
-	DB.Model(&VerificationCode{}).Where("email = ? AND used = ?", req.Email, false).Update("used", true)
+	// Invalidate any existing email verification codes for this email
+	DB.Model(&VerificationCode{}).Where("email = ? AND used = ? AND purpose = ?", req.Email, false, PurposeEmailVerification).Update("used", true)
 
 	// Create verification code record
 	verificationCode := VerificationCode{
 		Email:     req.Email,
 		Code:      code,
+		Purpose:   PurposeEmailVerification,
 		ExpiresAt: expiresAt,
 		Used:      false,
 	}
@@ -294,7 +338,7 @@ func VerifyEmail(c *gin.Context) {
 
 	// Find the verification code
 	var verificationCode VerificationCode
-	if err := DB.Where("email = ? AND code = ? AND used = ?", req.Email, req.Code, false).
+	if err := DB.Where("email = ? AND code = ? AND used = ? AND purpose = ?", req.Email, req.Code, false, PurposeEmailVerification).
 		First(&verificationCode).Error; err != nil {
 		ResponseJSON(c, http.StatusBadRequest, "Invalid or expired verification code", nil)
 		return
@@ -333,10 +377,11 @@ func VerifyEmail(c *gin.Context) {
 	// Generate JWT token
 	expirationTime := time.Now().Add(24 * time.Hour) // 24 hour expiration
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"user_id": user.ID,
-		"email":   user.Email,
-		"role":    string(user.Role),
-		"exp":     expirationTime.Unix(),
+		"user_id":       user.ID,
+		"email":         user.Email,
+		"role":          string(user.Role),
+		"token_version": user.TokenVersion,
+		"exp":           expirationTime.Unix(),
 	})
 
 	tokenString, err := token.SignedString(jwtSecret)
@@ -380,13 +425,14 @@ func ForgotPassword(c *gin.Context) {
 	code := GenerateVerificationCode()
 	expiresAt := time.Now().Add(15 * time.Minute) // Code expires in 15 minutes
 
-	// Invalidate any existing verification codes for this email
-	DB.Model(&VerificationCode{}).Where("email = ? AND used = ?", req.Email, false).Update("used", true)
+	// Invalidate any existing password reset codes for this email
+	DB.Model(&VerificationCode{}).Where("email = ? AND used = ? AND purpose = ?", req.Email, false, PurposePasswordReset).Update("used", true)
 
 	// Create verification code record
 	verificationCode := VerificationCode{
 		Email:     req.Email,
 		Code:      code,
+		Purpose:   PurposePasswordReset,
 		ExpiresAt: expiresAt,
 		Used:      false,
 	}
@@ -426,7 +472,7 @@ func VerifyForgotPasswordCode(c *gin.Context) {
 
 	// Check if there's any verification code for this email
 	var verificationCode VerificationCode
-	if err := DB.Where("email = ? AND used = ?", req.Email, false).
+	if err := DB.Where("email = ? AND used = ? AND purpose = ?", req.Email, false, PurposePasswordReset).
 		First(&verificationCode).Error; err != nil {
 		ResponseJSON(c, http.StatusBadRequest, "No verification code found for this email. Please request a new password reset code", nil)
 		return
@@ -475,7 +521,7 @@ func ResetPassword(c *gin.Context) {
 
 	// Check if there's any verification code for this email
 	var verificationCode VerificationCode
-	if err := DB.Where("email = ? AND used = ?", req.Email, false).
+	if err := DB.Where("email = ? AND used = ? AND purpose = ?", req.Email, false, PurposePasswordReset).
 		First(&verificationCode).Error; err != nil {
 		ResponseJSON(c, http.StatusBadRequest, "No verification code found for this email. Please request a new password reset code", nil)
 		return
@@ -552,13 +598,14 @@ func ResendDriverVerificationCode(c *gin.Context) {
 	code := GenerateVerificationCode()
 	expiresAt := time.Now().Add(15 * time.Minute) // Code expires in 15 minutes
 
-	// Invalidate any existing unused verification codes for this email
-	DB.Model(&VerificationCode{}).Where("email = ? AND used = ?", req.Email, false).Update("used", true)
+	// Invalidate any existing unused email verification codes for this email
+	DB.Model(&VerificationCode{}).Where("email = ? AND used = ? AND purpose = ?", req.Email, false, PurposeEmailVerification).Update("used", true)
 
 	// Create new verification code record
 	verificationCode := VerificationCode{
 		Email:     req.Email,
 		Code:      code,
+		Purpose:   PurposeEmailVerification,
 		ExpiresAt: expiresAt,
 		Used:      false,
 	}
@@ -609,13 +656,14 @@ func ResendForgotPasswordCode(c *gin.Context) {
 	code := GenerateVerificationCode()
 	expiresAt := time.Now().Add(15 * time.Minute) // Code expires in 15 minutes
 
-	// Invalidate any existing unused verification codes for this email
-	DB.Model(&VerificationCode{}).Where("email = ? AND used = ?", req.Email, false).Update("used", true)
+	// Invalidate any existing unused password reset codes for this email
+	DB.Model(&VerificationCode{}).Where("email = ? AND used = ? AND purpose = ?", req.Email, false, PurposePasswordReset).Update("used", true)
 
 	// Create new verification code record
 	verificationCode := VerificationCode{
 		Email:     req.Email,
 		Code:      code,
+		Purpose:   PurposePasswordReset,
 		ExpiresAt: expiresAt,
 		Used:      false,
 	}
@@ -635,6 +683,249 @@ func ResendForgotPasswordCode(c *gin.Context) {
 	}
 
 	ResponseJSON(c, http.StatusOK, "Password reset code has been resent to your email", nil)
+}
+
+// VerifyLoginOTP verifies the login OTP for super admin authentication.
+// It validates the OTP code and returns a JWT token upon successful verification.
+func VerifyLoginOTP(c *gin.Context) {
+	var req VerifyLoginOTPRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Invalid request payload: "+err.Error(), nil)
+		return
+	}
+
+	// Find the verification code
+	var verificationCode VerificationCode
+	if err := DB.Where("email = ? AND code = ? AND used = ? AND purpose = ?", req.Email, req.Code, false, PurposeLoginOTP).
+		First(&verificationCode).Error; err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Invalid or expired verification code", nil)
+		return
+	}
+
+	// Check if code has expired
+	if time.Now().After(verificationCode.ExpiresAt) {
+		ResponseJSON(c, http.StatusBadRequest, "Verification code has expired", nil)
+		return
+	}
+
+	// Find the user
+	var user User
+	if err := DB.Where("email = ?", req.Email).First(&user).Error; err != nil {
+		ResponseJSON(c, http.StatusNotFound, "User not found", nil)
+		return
+	}
+
+	// Verify user is a super admin
+	if user.Role != RoleSuperAdmin {
+		ResponseJSON(c, http.StatusForbidden, "This endpoint is only for super admin login verification", nil)
+		return
+	}
+
+	// Mark verification code as used
+	verificationCode.Used = true
+	DB.Save(&verificationCode)
+
+	// Generate JWT token
+	expirationTime := time.Now().Add(24 * time.Hour)
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"user_id":       user.ID,
+		"email":         user.Email,
+		"role":          string(user.Role),
+		"token_version": user.TokenVersion,
+		"exp":           expirationTime.Unix(),
+	})
+
+	tokenString, err := token.SignedString(jwtSecret)
+	if err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Could not generate token", nil)
+		return
+	}
+
+	user.Password = ""
+	ResponseJSON(c, http.StatusOK, "Login successful", gin.H{
+		"token": tokenString,
+		"user":  user,
+	})
+}
+
+// CreateAdmin creates a new admin user. Only accessible by super admins.
+func CreateAdmin(c *gin.Context) {
+	var req CreateAdminRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Invalid request payload: "+err.Error(), nil)
+		return
+	}
+
+	// Check if email already exists
+	var existingUserByEmail User
+	if err := DB.Where("email = ?", req.Email).First(&existingUserByEmail).Error; err == nil {
+		ResponseJSON(c, http.StatusConflict, "Email already registered", nil)
+		return
+	}
+
+	// Check if phone number already exists
+	var existingUserByPhone User
+	if err := DB.Where("phone = ?", req.Phone).First(&existingUserByPhone).Error; err == nil {
+		ResponseJSON(c, http.StatusConflict, "Phone number already registered", nil)
+		return
+	}
+
+	// Validate password strength
+	if err := ValidatePassword(req.Password); err != nil {
+		ResponseJSON(c, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+
+	// Create new admin user
+	admin := User{
+		Email:     req.Email,
+		Password:  req.Password, // Will be hashed by BeforeCreate hook
+		FirstName: req.FirstName,
+		LastName:  req.LastName,
+		Phone:     req.Phone,
+		Role:      RoleAdmin,
+		IsActive:  true,
+	}
+
+	if err := DB.Create(&admin).Error; err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to create admin", nil)
+		return
+	}
+
+	admin.Password = ""
+	ResponseJSON(c, http.StatusCreated, "Admin created successfully", admin)
+}
+
+// RequestChangePasswordOTP sends a verification code for password change.
+// This requires authentication and sends the code to the authenticated user's email.
+func RequestChangePasswordOTP(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		ResponseJSON(c, http.StatusUnauthorized, "User not authenticated", nil)
+		return
+	}
+
+	var user User
+	if err := DB.First(&user, userID).Error; err != nil {
+		ResponseJSON(c, http.StatusNotFound, "User not found", nil)
+		return
+	}
+
+	code := GenerateVerificationCode()
+	expiresAt := time.Now().Add(15 * time.Minute)
+
+	// Invalidate existing change password codes
+	DB.Model(&VerificationCode{}).Where("email = ? AND used = ? AND purpose = ?", user.Email, false, PurposeChangePassword).Update("used", true)
+
+	verificationCode := VerificationCode{
+		Email:     user.Email,
+		Code:      code,
+		Purpose:   PurposeChangePassword,
+		ExpiresAt: expiresAt,
+		Used:      false,
+	}
+
+	if err := DB.Create(&verificationCode).Error; err != nil {
+		log.Printf("Failed to create change password OTP: %v", err)
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to generate verification code", nil)
+		return
+	}
+
+	emailService := NewEmailService()
+	if err := emailService.SendChangePasswordOTP(user.Email, code); err != nil {
+		log.Printf("Failed to send change password OTP email: %v", err)
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to send verification code", nil)
+		return
+	}
+
+	ResponseJSON(c, http.StatusOK, "Verification code sent to your email", nil)
+}
+
+// ChangePassword handles password change with OTP verification.
+// It validates the OTP, verifies the old password, updates to the new password,
+// and invalidates all existing sessions by incrementing the token version.
+func ChangePassword(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		ResponseJSON(c, http.StatusUnauthorized, "User not authenticated", nil)
+		return
+	}
+
+	var req ChangePasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Invalid request payload: "+err.Error(), nil)
+		return
+	}
+
+	// Validate new password strength
+	if err := ValidatePassword(req.NewPassword); err != nil {
+		ResponseJSON(c, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+
+	var user User
+	if err := DB.First(&user, userID).Error; err != nil {
+		ResponseJSON(c, http.StatusNotFound, "User not found", nil)
+		return
+	}
+
+	// Verify OTP code
+	var verificationCode VerificationCode
+	if err := DB.Where("email = ? AND code = ? AND used = ? AND purpose = ?", user.Email, req.Code, false, PurposeChangePassword).
+		First(&verificationCode).Error; err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Invalid or expired verification code", nil)
+		return
+	}
+
+	if time.Now().After(verificationCode.ExpiresAt) {
+		ResponseJSON(c, http.StatusBadRequest, "Verification code has expired", nil)
+		return
+	}
+
+	// Verify old password
+	if !user.CheckPassword(req.OldPassword) {
+		ResponseJSON(c, http.StatusUnauthorized, "Current password is incorrect", nil)
+		return
+	}
+
+	// Mark code as used
+	verificationCode.Used = true
+	DB.Save(&verificationCode)
+
+	// Hash new password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to hash password", nil)
+		return
+	}
+
+	// Update password and increment token version to invalidate all existing sessions
+	user.Password = string(hashedPassword)
+	user.TokenVersion++
+	if err := DB.Save(&user).Error; err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to update password", nil)
+		return
+	}
+
+	// Generate new token with updated token version so the user stays logged in
+	expirationTime := time.Now().Add(24 * time.Hour)
+	newToken := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"user_id":       user.ID,
+		"email":         user.Email,
+		"role":          string(user.Role),
+		"token_version": user.TokenVersion,
+		"exp":           expirationTime.Unix(),
+	})
+
+	tokenString, err := newToken.SignedString(jwtSecret)
+	if err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Could not generate token", nil)
+		return
+	}
+
+	ResponseJSON(c, http.StatusOK, "Password changed successfully. All other sessions have been invalidated", gin.H{
+		"token": tokenString,
+	})
 }
 
 var DB *gorm.DB
@@ -667,8 +958,8 @@ func InitDB() {
 		log.Fatal("Failed to migrate schema:", err)
 	}
 
-	// Create default super admin if it doesn't exist
-	createDefaultSuperAdmin()
+	// Create default super admins if they don't exist
+	createDefaultSuperAdmins()
 }
 
 // GetProfile retrieves the current user's profile information.
@@ -787,37 +1078,68 @@ func UpdateKYCStatus(c *gin.Context) {
 	})
 }
 
-// createDefaultSuperAdmin creates a default super admin user if none exists.
+// createDefaultSuperAdmins creates two default super admin users if they don't exist.
 // This is called during database initialization.
-func createDefaultSuperAdmin() {
-	var count int64
-	DB.Model(&User{}).Where("role = ?", RoleSuperAdmin).Count(&count)
+func createDefaultSuperAdmins() {
+	superAdmins := []struct {
+		emailEnv        string
+		passwordEnv     string
+		defaultEmail    string
+		defaultPassword string
+		firstName       string
+		lastName        string
+		phone           string
+	}{
+		{
+			emailEnv:        "SUPER_ADMIN_EMAIL",
+			passwordEnv:     "SUPER_ADMIN_PASSWORD",
+			defaultEmail:    "adeolusegun1000@gmail.com",
+			defaultPassword: "David2026@@",
+			firstName:       "Oluwasegun",
+			lastName:        "Adeolu",
+			phone:           "07061938349",
+		},
+		{
+			emailEnv:        "SUPER_ADMIN_EMAIL_2",
+			passwordEnv:     "SUPER_ADMIN_PASSWORD_2",
+			defaultEmail:    "ileolagold.olalekan@gmail.com",
+			defaultPassword: "Lekan2026@@",
+			firstName:       "Olalekan",
+			lastName:        "ileola",
+			phone:           "08059231979",
+		},
+	}
 
-	if count == 0 {
-		// Get default credentials from environment or use defaults
-		email := os.Getenv("SUPER_ADMIN_EMAIL")
+	for _, sa := range superAdmins {
+		email := os.Getenv(sa.emailEnv)
 		if email == "" {
-			email = "admin@hauler.com"
+			email = sa.defaultEmail
 		}
-		password := os.Getenv("SUPER_ADMIN_PASSWORD")
+		password := os.Getenv(sa.passwordEnv)
 		if password == "" {
-			password = "Admin@123"
+			password = sa.defaultPassword
+		}
+
+		// Check if this super admin already exists
+		var existingUser User
+		if err := DB.Where("email = ?", email).First(&existingUser).Error; err == nil {
+			continue // Already exists, skip
 		}
 
 		superAdmin := User{
 			Email:     email,
 			Password:  password, // Will be hashed by BeforeCreate hook
-			FirstName: "Super",
-			LastName:  "Admin",
-			Phone:     "+1234567890",
+			FirstName: sa.firstName,
+			LastName:  sa.lastName,
+			Phone:     sa.phone,
 			Role:      RoleSuperAdmin,
 			IsActive:  true,
 		}
 
 		if err := DB.Create(&superAdmin).Error; err != nil {
-			log.Printf("Warning: Failed to create default super admin: %v", err)
+			log.Printf("Warning: Failed to create super admin %s: %v", email, err)
 		} else {
-			log.Printf("Default super admin created with email: %s", email)
+			log.Printf("Super admin created with email: %s", email)
 		}
 	}
 }

@@ -163,6 +163,154 @@ Security Notice: If you didn't request this password reset, please ignore this e
 	return nil
 }
 
+// SendLoginOTP sends a login verification OTP to the specified email address
+func (es *EmailService) SendLoginOTP(email, code string) error {
+	subject := "Login Verification Code"
+	htmlBody := fmt.Sprintf(`
+		<!DOCTYPE html>
+		<html>
+		<head>
+			<meta charset="UTF-8">
+			<style>
+				body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+				.container { max-width: 600px; margin: 0 auto; padding: 20px; }
+				.header { background-color: #1E40AF; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+				.content { background-color: #f9f9f9; padding: 30px; border-radius: 0 0 5px 5px; }
+				.code { font-size: 32px; font-weight: bold; color: #1E40AF; text-align: center; padding: 20px; background-color: white; border-radius: 5px; margin: 20px 0; letter-spacing: 5px; }
+				.footer { text-align: center; margin-top: 20px; color: #666; font-size: 12px; }
+				.warning { background-color: #FEF2F2; border-left: 4px solid #DC2626; padding: 15px; margin: 20px 0; }
+			</style>
+		</head>
+		<body>
+			<div class="container">
+				<div class="header">
+					<h1>Login Verification</h1>
+				</div>
+				<div class="content">
+					<p>Hello,</p>
+					<p>A login attempt was made to your account. Please use the verification code below to complete your login:</p>
+					<div class="code">%s</div>
+					<p>This code will expire in 15 minutes.</p>
+					<div class="warning">
+						<p><strong>Security Notice:</strong> If you didn't attempt to log in, please change your password immediately and contact support.</p>
+					</div>
+				</div>
+				<div class="footer">
+					<p>&copy; Hauler Services. All rights reserved.</p>
+				</div>
+			</div>
+		</body>
+		</html>
+	`, code)
+
+	textBody := fmt.Sprintf(`
+Login Verification
+
+Hello,
+
+A login attempt was made to your account. Please use the verification code below to complete your login:
+
+%s
+
+This code will expire in 15 minutes.
+
+Security Notice: If you didn't attempt to log in, please change your password immediately and contact support.
+
+Hauler Services. All rights reserved.
+	`, code)
+
+	params := &resend.SendEmailRequest{
+		From:    es.fromEmail,
+		To:      []string{email},
+		Subject: subject,
+		Html:    htmlBody,
+		Text:    textBody,
+	}
+
+	sent, err := es.client.Emails.Send(params)
+	if err != nil {
+		log.Printf("Failed to send login OTP email via Resend: %v", err)
+		return fmt.Errorf("failed to send login OTP email: %w", err)
+	}
+
+	log.Printf("Login OTP email sent successfully via Resend. Email ID: %s", sent.Id)
+	return nil
+}
+
+// SendChangePasswordOTP sends a change password verification OTP to the specified email address
+func (es *EmailService) SendChangePasswordOTP(email, code string) error {
+	subject := "Change Password Verification Code"
+	htmlBody := fmt.Sprintf(`
+		<!DOCTYPE html>
+		<html>
+		<head>
+			<meta charset="UTF-8">
+			<style>
+				body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+				.container { max-width: 600px; margin: 0 auto; padding: 20px; }
+				.header { background-color: #F59E0B; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+				.content { background-color: #f9f9f9; padding: 30px; border-radius: 0 0 5px 5px; }
+				.code { font-size: 32px; font-weight: bold; color: #F59E0B; text-align: center; padding: 20px; background-color: white; border-radius: 5px; margin: 20px 0; letter-spacing: 5px; }
+				.footer { text-align: center; margin-top: 20px; color: #666; font-size: 12px; }
+				.warning { background-color: #FFFBEB; border-left: 4px solid #F59E0B; padding: 15px; margin: 20px 0; }
+			</style>
+		</head>
+		<body>
+			<div class="container">
+				<div class="header">
+					<h1>Change Password</h1>
+				</div>
+				<div class="content">
+					<p>Hello,</p>
+					<p>A request was made to change your password. Please use the verification code below to proceed:</p>
+					<div class="code">%s</div>
+					<p>This code will expire in 15 minutes.</p>
+					<div class="warning">
+						<p><strong>Security Notice:</strong> If you didn't request this change, please secure your account immediately and contact support.</p>
+					</div>
+				</div>
+				<div class="footer">
+					<p>&copy; Hauler Services. All rights reserved.</p>
+				</div>
+			</div>
+		</body>
+		</html>
+	`, code)
+
+	textBody := fmt.Sprintf(`
+Change Password Verification
+
+Hello,
+
+A request was made to change your password. Please use the verification code below to proceed:
+
+%s
+
+This code will expire in 15 minutes.
+
+Security Notice: If you didn't request this change, please secure your account immediately and contact support.
+
+Hauler Services. All rights reserved.
+	`, code)
+
+	params := &resend.SendEmailRequest{
+		From:    es.fromEmail,
+		To:      []string{email},
+		Subject: subject,
+		Html:    htmlBody,
+		Text:    textBody,
+	}
+
+	sent, err := es.client.Emails.Send(params)
+	if err != nil {
+		log.Printf("Failed to send change password OTP email via Resend: %v", err)
+		return fmt.Errorf("failed to send change password OTP email: %w", err)
+	}
+
+	log.Printf("Change password OTP email sent successfully via Resend. Email ID: %s", sent.Id)
+	return nil
+}
+
 // GenerateVerificationCode generates a cryptographically secure random 6-digit verification code
 func GenerateVerificationCode() string {
 	// Generate a random number between 0 and 999999
