@@ -48,7 +48,7 @@ func setupTestDB() {
 		panic("failed to connect test database: " + err.Error() +
 			"\nNote: SQLite driver requires CGO. Set CGO_ENABLED=1 and ensure you have a C compiler installed.")
 	}
-	if err := api.DB.AutoMigrate(&api.User{}, &api.VerificationCode{}); err != nil {
+	if err := api.DB.AutoMigrate(&api.User{}, &api.VerificationCode{}, &api.Country{}, &api.State{}, &api.Gender{}, &api.DriverProfile{}); err != nil {
 		panic("failed to migrate test database: " + err.Error())
 	}
 }

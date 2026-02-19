@@ -42,6 +42,11 @@ func main() {
 	r.POST("/api/driver/verify-email", api.VerifyEmail)
 	r.POST("/api/driver/resend-verification-code", api.ResendDriverVerificationCode)
 
+	// Public routes - Countries, States, and Genders
+	r.GET("/api/countries", api.GetCountries)
+	r.GET("/api/countries/:id/states", api.GetStatesByCountry)
+	r.GET("/api/genders", api.GetGenders)
+
 	// Password reset flow
 	r.POST("/api/auth/forgot-password", api.ForgotPassword)
 	r.POST("/api/auth/verify-forgot-password", api.VerifyForgotPasswordCode)
@@ -55,14 +60,28 @@ func main() {
 		// KYC management
 		protected.PUT("/driver/kyc-status", api.UpdateKYCStatus)     // Driver updates own KYC
 		protected.PUT("/driver/kyc-status/:id", api.UpdateKYCStatus) // Admin updates driver KYC
+		// KYC
+		protected.GET("/driver/kyc", api.GetKYCProfile)
+		protected.POST("/driver/kyc/step/1", api.SubmitKYCStep1)
+		protected.POST("/driver/kyc/step/2", api.SubmitKYCStep2)
+		protected.POST("/driver/kyc/step/3", api.SubmitKYCStep3)
+		// Token refresh
+		protected.POST("/auth/refresh-token", api.RefreshToken)
 		// Change password
 		protected.POST("/auth/change-password/request-otp", api.RequestChangePasswordOTP)
 		protected.POST("/auth/change-password", api.ChangePassword)
 	}
 
-	// Admin routes
-	_ = r.Group("/api/admin", api.JWTAuthMiddleware(), api.RequireAdmin())
-	// Admin-specific routes will be added here
+	// Admin routes - Country and State management
+	admin := r.Group("/api/admin", api.JWTAuthMiddleware(), api.RequireAdmin())
+	{
+		admin.POST("/countries", api.CreateCountry)
+		admin.PUT("/countries/:id", api.UpdateCountry)
+		admin.DELETE("/countries/:id", api.DeleteCountry)
+		admin.POST("/states", api.CreateState)
+		admin.PUT("/states/:id", api.UpdateState)
+		admin.DELETE("/states/:id", api.DeleteState)
+	}
 
 	// Super Admin routes
 	superAdmin := r.Group("/api/super-admin", api.JWTAuthMiddleware(), api.RequireSuperAdmin())

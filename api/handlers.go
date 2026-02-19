@@ -213,6 +213,14 @@ func Login(c *gin.Context) {
 
 		responseData["kyc_status"] = user.KYCStatus
 
+		// Get driver's current KYC step progress
+		var driverProfile DriverProfile
+		kycCurrentStep := uint(0)
+		if err := DB.Where("user_id = ?", user.ID).First(&driverProfile).Error; err == nil {
+			kycCurrentStep = driverProfile.CurrentStep
+		}
+		responseData["kyc_current_step"] = kycCurrentStep
+
 		// Check if KYC is not approved
 		if user.KYCStatus != KYCStatusApproved {
 			responseData["requires_kyc"] = true
@@ -841,6 +849,52 @@ func RequestChangePasswordOTP(c *gin.Context) {
 	ResponseJSON(c, http.StatusOK, "Verification code sent to your email", nil)
 }
 
+// RefreshToken issues a new JWT token for the authenticated user.
+// The user must provide a valid (non-expired) token to receive a fresh one.
+func RefreshToken(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		ResponseJSON(c, http.StatusUnauthorized, "User not authenticated", nil)
+		return
+	}
+
+	var user User
+	if err := DB.First(&user, userID).Error; err != nil {
+		ResponseJSON(c, http.StatusNotFound, "User not found", nil)
+		return
+	}
+
+	if !user.IsActive {
+		ResponseJSON(c, http.StatusForbidden, "Account is deactivated", nil)
+		return
+	}
+
+	// Only drivers and customers can refresh tokens
+	if user.Role != RoleDriver && user.Role != RoleCustomer {
+		ResponseJSON(c, http.StatusForbidden, "Token refresh is not available for this role", nil)
+		return
+	}
+
+	expirationTime := time.Now().Add(24 * time.Hour)
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"user_id":       user.ID,
+		"email":         user.Email,
+		"role":          string(user.Role),
+		"token_version": user.TokenVersion,
+		"exp":           expirationTime.Unix(),
+	})
+
+	tokenString, err := token.SignedString(jwtSecret)
+	if err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Could not generate token", nil)
+		return
+	}
+
+	ResponseJSON(c, http.StatusOK, "Token refreshed successfully", gin.H{
+		"token": tokenString,
+	})
+}
+
 // ChangePassword handles password change with OTP verification.
 // It validates the OTP, verifies the old password, updates to the new password,
 // and invalidates all existing sessions by incrementing the token version.
@@ -928,6 +982,491 @@ func ChangePassword(c *gin.Context) {
 	})
 }
 
+// GetCountries returns all countries.
+func GetCountries(c *gin.Context) {
+	var countries []Country
+	if err := DB.Order("name ASC").Find(&countries).Error; err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to fetch countries", nil)
+		return
+	}
+	ResponseJSON(c, http.StatusOK, "Countries retrieved successfully", countries)
+}
+
+// GetStatesByCountry returns all states for a given country.
+func GetStatesByCountry(c *gin.Context) {
+	countryID := c.Param("id")
+
+	var country Country
+	if err := DB.First(&country, countryID).Error; err != nil {
+		ResponseJSON(c, http.StatusNotFound, "Country not found", nil)
+		return
+	}
+
+	var states []State
+	if err := DB.Where("country_id = ?", countryID).Order("name ASC").Find(&states).Error; err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to fetch states", nil)
+		return
+	}
+	ResponseJSON(c, http.StatusOK, "States retrieved successfully", states)
+}
+
+// CreateCountry creates a new country. Admin or super admin only.
+func CreateCountry(c *gin.Context) {
+	var req CreateCountryRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Invalid request payload: "+err.Error(), nil)
+		return
+	}
+
+	var existing Country
+	if err := DB.Where("name = ? OR code = ?", req.Name, req.Code).First(&existing).Error; err == nil {
+		ResponseJSON(c, http.StatusConflict, "Country with this name or code already exists", nil)
+		return
+	}
+
+	country := Country{Name: req.Name, Code: req.Code}
+	if err := DB.Create(&country).Error; err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to create country", nil)
+		return
+	}
+	ResponseJSON(c, http.StatusCreated, "Country created successfully", country)
+}
+
+// UpdateCountry updates an existing country. Admin or super admin only.
+func UpdateCountry(c *gin.Context) {
+	countryID := c.Param("id")
+
+	var country Country
+	if err := DB.First(&country, countryID).Error; err != nil {
+		ResponseJSON(c, http.StatusNotFound, "Country not found", nil)
+		return
+	}
+
+	var req UpdateCountryRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Invalid request payload: "+err.Error(), nil)
+		return
+	}
+
+	if req.Name != "" {
+		country.Name = req.Name
+	}
+	if req.Code != "" {
+		country.Code = req.Code
+	}
+
+	if err := DB.Save(&country).Error; err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to update country", nil)
+		return
+	}
+	ResponseJSON(c, http.StatusOK, "Country updated successfully", country)
+}
+
+// DeleteCountry deletes a country and all its states. Admin or super admin only.
+func DeleteCountry(c *gin.Context) {
+	countryID := c.Param("id")
+
+	var country Country
+	if err := DB.First(&country, countryID).Error; err != nil {
+		ResponseJSON(c, http.StatusNotFound, "Country not found", nil)
+		return
+	}
+
+	// Delete all states belonging to this country first
+	DB.Where("country_id = ?", countryID).Delete(&State{})
+
+	if err := DB.Delete(&country).Error; err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to delete country", nil)
+		return
+	}
+	ResponseJSON(c, http.StatusOK, "Country and its states deleted successfully", nil)
+}
+
+// CreateState creates a new state within a country. Admin or super admin only.
+func CreateState(c *gin.Context) {
+	var req CreateStateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Invalid request payload: "+err.Error(), nil)
+		return
+	}
+
+	// Verify the country exists
+	var country Country
+	if err := DB.First(&country, req.CountryID).Error; err != nil {
+		ResponseJSON(c, http.StatusNotFound, "Country not found", nil)
+		return
+	}
+
+	// Check for duplicate state name within the same country
+	var existing State
+	if err := DB.Where("country_id = ? AND name = ?", req.CountryID, req.Name).First(&existing).Error; err == nil {
+		ResponseJSON(c, http.StatusConflict, "State with this name already exists in this country", nil)
+		return
+	}
+
+	state := State{CountryID: req.CountryID, Name: req.Name, Code: req.Code}
+	if err := DB.Create(&state).Error; err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to create state", nil)
+		return
+	}
+	ResponseJSON(c, http.StatusCreated, "State created successfully", state)
+}
+
+// UpdateState updates an existing state. Admin or super admin only.
+func UpdateState(c *gin.Context) {
+	stateID := c.Param("id")
+
+	var state State
+	if err := DB.First(&state, stateID).Error; err != nil {
+		ResponseJSON(c, http.StatusNotFound, "State not found", nil)
+		return
+	}
+
+	var req UpdateStateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Invalid request payload: "+err.Error(), nil)
+		return
+	}
+
+	if req.Name != "" {
+		state.Name = req.Name
+	}
+	if req.Code != "" {
+		state.Code = req.Code
+	}
+
+	if err := DB.Save(&state).Error; err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to update state", nil)
+		return
+	}
+	ResponseJSON(c, http.StatusOK, "State updated successfully", state)
+}
+
+// SubmitKYCStep1 handles submission of KYC step 1 (Personal Information).
+// It creates or updates the driver's profile with personal details.
+func SubmitKYCStep1(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		ResponseJSON(c, http.StatusUnauthorized, "User not authenticated", nil)
+		return
+	}
+
+	// Verify user is a driver
+	role, _ := c.Get("role")
+	if UserRole(role.(string)) != RoleDriver {
+		ResponseJSON(c, http.StatusForbidden, "Only drivers can submit KYC", nil)
+		return
+	}
+
+	var req KYCStep1Request
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Invalid request payload: "+err.Error(), nil)
+		return
+	}
+
+	// Parse date of birth
+	dob, err := time.Parse(time.RFC3339, req.DateOfBirth)
+	if err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Invalid date of birth format. Use ISO 8601 format (e.g. 2000-01-30T00:00:00.000Z)", nil)
+		return
+	}
+
+	// Validate country exists
+	var country Country
+	if err := DB.First(&country, req.CountryID).Error; err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Invalid country ID", nil)
+		return
+	}
+
+	// Validate state exists and belongs to the selected country
+	var state State
+	if err := DB.Where("id = ? AND country_id = ?", req.StateID, req.CountryID).First(&state).Error; err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Invalid state ID or state does not belong to the selected country", nil)
+		return
+	}
+
+	// Validate gender exists
+	var gender Gender
+	if err := DB.First(&gender, req.GenderID).Error; err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Invalid gender ID", nil)
+		return
+	}
+
+	// Find or create driver profile
+	var profile DriverProfile
+	isNew := false
+	if err := DB.Where("user_id = ?", userID).First(&profile).Error; err != nil {
+		profile = DriverProfile{UserID: userID.(uint)}
+		isNew = true
+	}
+
+	// Update step 1 fields
+	profile.FullName = req.FullName
+	profile.PhoneNumber = req.PhoneNumber
+	profile.Email = req.Email
+	profile.CountryID = &req.CountryID
+	profile.StateID = &req.StateID
+	profile.GenderID = &req.GenderID
+	profile.HouseAddress = req.HouseAddress
+	profile.OfficeAddress = req.OfficeAddress
+	profile.DateOfBirth = &dob
+
+	// Only advance step if currently at step 0
+	if profile.CurrentStep < 1 {
+		profile.CurrentStep = 1
+	}
+
+	if isNew {
+		if err := DB.Create(&profile).Error; err != nil {
+			ResponseJSON(c, http.StatusInternalServerError, "Failed to create KYC profile", nil)
+			return
+		}
+	} else {
+		if err := DB.Save(&profile).Error; err != nil {
+			ResponseJSON(c, http.StatusInternalServerError, "Failed to update KYC profile", nil)
+			return
+		}
+	}
+
+	// Preload relationships for the response
+	DB.Preload("Country").Preload("State").Preload("Gender").First(&profile, profile.ID)
+
+	ResponseJSON(c, http.StatusOK, "KYC Step 1 completed successfully", gin.H{
+		"profile":      profile,
+		"current_step": profile.CurrentStep,
+		"total_steps":  5,
+	})
+}
+
+// SubmitKYCStep2 handles submission of KYC step 2 (Selfie).
+// It accepts a selfie image via form-data, uploads it to S3, and stores the URL.
+func SubmitKYCStep2(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		ResponseJSON(c, http.StatusUnauthorized, "User not authenticated", nil)
+		return
+	}
+
+	// Verify user is a driver
+	role, _ := c.Get("role")
+	if UserRole(role.(string)) != RoleDriver {
+		ResponseJSON(c, http.StatusForbidden, "Only drivers can submit KYC", nil)
+		return
+	}
+
+	// Check that step 1 is completed
+	var profile DriverProfile
+	if err := DB.Where("user_id = ?", userID).First(&profile).Error; err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Please complete Step 1 first", nil)
+		return
+	}
+	if profile.CurrentStep < 1 {
+		ResponseJSON(c, http.StatusBadRequest, "Please complete Step 1 first", nil)
+		return
+	}
+
+	// Get the selfie file from form-data
+	file, err := c.FormFile("selfie")
+	if err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Selfie image is required. Send as form-data with key 'selfie'", nil)
+		return
+	}
+
+	// Validate image file (max 5MB, must be JPEG/PNG/WebP)
+	if err := ValidateImageFile(file, 5); err != nil {
+		ResponseJSON(c, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+
+	// Upload to S3
+	selfieURL, err := UploadFileToS3(file, "kyc/selfies")
+	if err != nil {
+		log.Printf("Failed to upload selfie to S3: %v", err)
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to upload selfie", nil)
+		return
+	}
+
+	// Update profile
+	profile.SelfieURL = selfieURL
+	if profile.CurrentStep < 2 {
+		profile.CurrentStep = 2
+	}
+
+	if err := DB.Save(&profile).Error; err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to update KYC profile", nil)
+		return
+	}
+
+	DB.Preload("Country").Preload("State").Preload("Gender").First(&profile, profile.ID)
+
+	ResponseJSON(c, http.StatusOK, "KYC Step 2 completed successfully", gin.H{
+		"profile":      profile,
+		"current_step": profile.CurrentStep,
+		"total_steps":  5,
+	})
+}
+
+// SubmitKYCStep3 handles submission of KYC step 3 (Vehicle Documentation & Driver License).
+// It accepts three images via form-data: license_front, license_back, and vehicle_photo.
+func SubmitKYCStep3(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		ResponseJSON(c, http.StatusUnauthorized, "User not authenticated", nil)
+		return
+	}
+
+	role, _ := c.Get("role")
+	if UserRole(role.(string)) != RoleDriver {
+		ResponseJSON(c, http.StatusForbidden, "Only drivers can submit KYC", nil)
+		return
+	}
+
+	// Check that step 2 is completed
+	var profile DriverProfile
+	if err := DB.Where("user_id = ?", userID).First(&profile).Error; err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Please complete previous steps first", nil)
+		return
+	}
+	if profile.CurrentStep < 2 {
+		ResponseJSON(c, http.StatusBadRequest, "Please complete Step 2 first", nil)
+		return
+	}
+
+	// Get and validate all three files
+	licenseFront, err := c.FormFile("license_front")
+	if err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Driver license front image is required. Send as form-data with key 'license_front'", nil)
+		return
+	}
+	if err := ValidateImageFile(licenseFront, 5); err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "license_front: "+err.Error(), nil)
+		return
+	}
+
+	licenseBack, err := c.FormFile("license_back")
+	if err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Driver license back image is required. Send as form-data with key 'license_back'", nil)
+		return
+	}
+	if err := ValidateImageFile(licenseBack, 5); err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "license_back: "+err.Error(), nil)
+		return
+	}
+
+	vehiclePhoto, err := c.FormFile("vehicle_photo")
+	if err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Vehicle photo is required. Send as form-data with key 'vehicle_photo'", nil)
+		return
+	}
+	if err := ValidateImageFile(vehiclePhoto, 5); err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "vehicle_photo: "+err.Error(), nil)
+		return
+	}
+
+	// Upload all three to S3
+	licenseFrontURL, err := UploadFileToS3(licenseFront, "kyc/licenses")
+	if err != nil {
+		log.Printf("Failed to upload license front to S3: %v", err)
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to upload driver license front image", nil)
+		return
+	}
+
+	licenseBackURL, err := UploadFileToS3(licenseBack, "kyc/licenses")
+	if err != nil {
+		log.Printf("Failed to upload license back to S3: %v", err)
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to upload driver license back image", nil)
+		return
+	}
+
+	vehiclePhotoURL, err := UploadFileToS3(vehiclePhoto, "kyc/vehicles")
+	if err != nil {
+		log.Printf("Failed to upload vehicle photo to S3: %v", err)
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to upload vehicle photo", nil)
+		return
+	}
+
+	// Update profile
+	profile.LicenseFrontURL = licenseFrontURL
+	profile.LicenseBackURL = licenseBackURL
+	profile.VehiclePhotoURL = vehiclePhotoURL
+	if profile.CurrentStep < 3 {
+		profile.CurrentStep = 3
+	}
+
+	if err := DB.Save(&profile).Error; err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to update KYC profile", nil)
+		return
+	}
+
+	DB.Preload("Country").Preload("State").Preload("Gender").First(&profile, profile.ID)
+
+	ResponseJSON(c, http.StatusOK, "KYC Step 3 completed successfully", gin.H{
+		"profile":      profile,
+		"current_step": profile.CurrentStep,
+		"total_steps":  5,
+	})
+}
+
+// GetKYCProfile returns the current driver's KYC profile and step progress.
+func GetKYCProfile(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		ResponseJSON(c, http.StatusUnauthorized, "User not authenticated", nil)
+		return
+	}
+
+	// Verify user is a driver
+	role, _ := c.Get("role")
+	if UserRole(role.(string)) != RoleDriver {
+		ResponseJSON(c, http.StatusForbidden, "Only drivers can access KYC profile", nil)
+		return
+	}
+
+	var profile DriverProfile
+	if err := DB.Preload("Country").Preload("State").Preload("Gender").
+		Where("user_id = ?", userID).First(&profile).Error; err != nil {
+		ResponseJSON(c, http.StatusOK, "KYC profile not started", gin.H{
+			"profile":      nil,
+			"current_step": 0,
+			"total_steps":  5,
+		})
+		return
+	}
+
+	ResponseJSON(c, http.StatusOK, "KYC profile retrieved successfully", gin.H{
+		"profile":      profile,
+		"current_step": profile.CurrentStep,
+		"total_steps":  5,
+	})
+}
+
+// GetGenders returns all gender options.
+func GetGenders(c *gin.Context) {
+	var genders []Gender
+	if err := DB.Order("id ASC").Find(&genders).Error; err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to fetch genders", nil)
+		return
+	}
+	ResponseJSON(c, http.StatusOK, "Genders retrieved successfully", genders)
+}
+
+// DeleteState deletes a state. Admin or super admin only.
+func DeleteState(c *gin.Context) {
+	stateID := c.Param("id")
+
+	var state State
+	if err := DB.First(&state, stateID).Error; err != nil {
+		ResponseJSON(c, http.StatusNotFound, "State not found", nil)
+		return
+	}
+
+	if err := DB.Delete(&state).Error; err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to delete state", nil)
+		return
+	}
+	ResponseJSON(c, http.StatusOK, "State deleted successfully", nil)
+}
+
 var DB *gorm.DB
 
 // InitDB initializes the database connection using environment variables.
@@ -954,12 +1493,21 @@ func InitDB() {
 	}
 
 	// Migrate the schema
-	if err = DB.AutoMigrate(&User{}, &VerificationCode{}); err != nil {
+	if err = DB.AutoMigrate(&User{}, &VerificationCode{}, &Country{}, &State{}, &Gender{}, &DriverProfile{}); err != nil {
 		log.Fatal("Failed to migrate schema:", err)
 	}
 
 	// Create default super admins if they don't exist
 	createDefaultSuperAdmins()
+
+	// Seed default countries and states
+	seedCountries()
+
+	// Seed default genders
+	seedGenders()
+
+	// Initialize S3 client for file uploads
+	InitS3()
 }
 
 // GetProfile retrieves the current user's profile information.
@@ -978,7 +1526,27 @@ func GetProfile(c *gin.Context) {
 	}
 
 	user.Password = ""
-	ResponseJSON(c, http.StatusOK, "Profile retrieved successfully", user)
+
+	responseData := gin.H{
+		"user": user,
+	}
+
+	// For drivers, include KYC step progress and profile picture
+	if user.Role == RoleDriver {
+		var driverProfile DriverProfile
+		kycCurrentStep := uint(0)
+		if err := DB.Where("user_id = ?", user.ID).First(&driverProfile).Error; err == nil {
+			kycCurrentStep = driverProfile.CurrentStep
+			if driverProfile.SelfieURL != "" {
+				responseData["profile_picture"] = driverProfile.SelfieURL
+			}
+		}
+		responseData["kyc_current_step"] = kycCurrentStep
+		responseData["kyc_status"] = user.KYCStatus
+		responseData["total_steps"] = 5
+	}
+
+	ResponseJSON(c, http.StatusOK, "Profile retrieved successfully", responseData)
 }
 
 // UpdateKYCStatus updates the KYC status for a driver.
@@ -1142,4 +1710,54 @@ func createDefaultSuperAdmins() {
 			log.Printf("Super admin created with email: %s", email)
 		}
 	}
+}
+
+// seedCountries seeds the database with default countries and their states.
+func seedCountries() {
+	var count int64
+	DB.Model(&Country{}).Count(&count)
+	if count > 0 {
+		return // Already seeded
+	}
+
+	nigeria := Country{Name: "Nigeria", Code: "NG"}
+	if err := DB.Create(&nigeria).Error; err != nil {
+		log.Printf("Warning: Failed to seed Nigeria: %v", err)
+		return
+	}
+
+	states := []string{
+		"Abia", "Adamawa", "Akwa Ibom", "Anambra", "Bauchi", "Bayelsa",
+		"Benue", "Borno", "Cross River", "Delta", "Ebonyi", "Edo",
+		"Ekiti", "Enugu", "FCT (Abuja)", "Gombe", "Imo", "Jigawa",
+		"Kaduna", "Kano", "Katsina", "Kebbi", "Kogi", "Kwara",
+		"Lagos", "Nasarawa", "Niger", "Ogun", "Ondo", "Osun",
+		"Oyo", "Plateau", "Rivers", "Sokoto", "Taraba", "Yobe", "Zamfara",
+	}
+
+	for _, name := range states {
+		state := State{CountryID: nigeria.ID, Name: name}
+		if err := DB.Create(&state).Error; err != nil {
+			log.Printf("Warning: Failed to seed state %s: %v", name, err)
+		}
+	}
+
+	log.Printf("Seeded Nigeria with %d states", len(states))
+}
+
+// seedGenders seeds the database with default gender options.
+func seedGenders() {
+	var count int64
+	DB.Model(&Gender{}).Count(&count)
+	if count > 0 {
+		return
+	}
+
+	for _, name := range []string{"Male", "Female"} {
+		if err := DB.Create(&Gender{Name: name}).Error; err != nil {
+			log.Printf("Warning: Failed to seed gender %s: %v", name, err)
+		}
+	}
+
+	log.Printf("Seeded default genders")
 }
