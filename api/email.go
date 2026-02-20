@@ -311,6 +311,101 @@ Hauler Services. All rights reserved.
 	return nil
 }
 
+// SendAdminWelcomeEmail sends a welcome email to newly created admin with login credentials
+func (es *EmailService) SendAdminWelcomeEmail(email, password, firstName string) error {
+	subject := "Welcome to Hauler Admin Panel"
+	htmlBody := fmt.Sprintf(`
+		<!DOCTYPE html>
+		<html>
+		<head>
+			<meta charset="UTF-8">
+			<style>
+				body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+				.container { max-width: 600px; margin: 0 auto; padding: 20px; }
+				.header { background-color: #10B981; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+				.content { background-color: #f9f9f9; padding: 30px; border-radius: 0 0 5px 5px; }
+				.credentials { background-color: white; padding: 20px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #10B981; }
+				.credential-item { margin: 10px 0; }
+				.credential-label { font-weight: bold; color: #10B981; }
+				.credential-value { font-family: monospace; background-color: #f3f4f6; padding: 5px 10px; border-radius: 3px; display: inline-block; }
+				.footer { text-align: center; margin-top: 20px; color: #666; font-size: 12px; }
+				.warning { background-color: #FEF2F2; border-left: 4px solid #DC2626; padding: 15px; margin: 20px 0; }
+			</style>
+		</head>
+		<body>
+			<div class="container">
+				<div class="header">
+					<h1>Welcome to Hauler Admin Panel</h1>
+				</div>
+				<div class="content">
+					<p>Hello %s,</p>
+					<p>Your admin account has been successfully created. Below are your login credentials:</p>
+					<div class="credentials">
+						<div class="credential-item">
+							<span class="credential-label">Email:</span>
+							<span class="credential-value">%s</span>
+						</div>
+						<div class="credential-item">
+							<span class="credential-label">Temporary Password:</span>
+							<span class="credential-value">%s</span>
+						</div>
+					</div>
+					<div class="warning">
+						<p><strong>Important Security Notice:</strong></p>
+						<ul>
+							<li>You will be required to change your password on first login</li>
+							<li>Do not share your credentials with anyone</li>
+							<li>Keep your password secure and confidential</li>
+						</ul>
+					</div>
+					<p>Please login to the admin panel and change your password immediately.</p>
+				</div>
+				<div class="footer">
+					<p>&copy; Hauler Services. All rights reserved.</p>
+				</div>
+			</div>
+		</body>
+		</html>
+	`, firstName, email, password)
+
+	textBody := fmt.Sprintf(`
+Welcome to Hauler Admin Panel
+
+Hello %s,
+
+Your admin account has been successfully created. Below are your login credentials:
+
+Email: %s
+Temporary Password: %s
+
+Important Security Notice:
+- You will be required to change your password on first login
+- Do not share your credentials with anyone
+- Keep your password secure and confidential
+
+Please login to the admin panel and change your password immediately.
+
+Hauler Services. All rights reserved.
+	`, firstName, email, password)
+
+	params := &resend.SendEmailRequest{
+		From:    es.fromEmail,
+		To:      []string{email},
+		Subject: subject,
+		Html:    htmlBody,
+		Text:    textBody,
+	}
+
+	sent, err := es.client.Emails.Send(params)
+	if err != nil {
+		log.Printf("Failed to send admin welcome email via Resend: %v", err)
+		return fmt.Errorf("failed to send admin welcome email: %w", err)
+	}
+
+	log.Printf("Admin welcome email sent successfully via Resend. Email ID: %s", sent.Id)
+	return nil
+}
+
 // GenerateVerificationCode generates a cryptographically secure random 6-digit verification code
 func GenerateVerificationCode() string {
 	// Generate a random number between 0 and 999999

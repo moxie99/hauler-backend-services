@@ -40,19 +40,26 @@ const (
 
 // User represents a user in the haulage system
 type User struct {
-	ID           uint           `json:"id" gorm:"primaryKey"`
-	Email        string         `json:"email" gorm:"uniqueIndex;not null" binding:"required,email"`
-	Password     string         `json:"-" gorm:"not null" binding:"required,min=6"`
-	FirstName    string         `json:"first_name" binding:"required,min=1,max=100"`
-	LastName     string         `json:"last_name" binding:"required,min=1,max=100"`
-	Phone        string         `json:"phone" binding:"required,min=10,max=20"`
-	Role         UserRole       `json:"role" gorm:"type:varchar(20);not null;default:'customer'"`
-	IsActive     bool           `json:"is_active" gorm:"default:true"`
-	KYCStatus    KYCStatus      `json:"kyc_status" gorm:"type:varchar(20);default:null"` // Only for drivers
-	TokenVersion uint           `json:"-" gorm:"default:0"`
-	CreatedAt    time.Time      `json:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at"`
-	DeletedAt    gorm.DeletedAt `json:"-" gorm:"index"`
+	ID                  uint           `json:"id" gorm:"primaryKey"`
+	Email               string         `json:"email" gorm:"uniqueIndex;not null" binding:"required,email"`
+	Password            string         `json:"-" gorm:"not null" binding:"required,min=6"`
+	FirstName           string         `json:"first_name" binding:"required,min=1,max=100"`
+	LastName            string         `json:"last_name" binding:"required,min=1,max=100"`
+	Phone               string         `json:"phone" binding:"required,min=10,max=20"`
+	Role                UserRole       `json:"role" gorm:"type:varchar(20);not null;default:'customer'"`
+	IsActive            bool           `json:"is_active" gorm:"default:true"`
+	KYCStatus           KYCStatus      `json:"kyc_status" gorm:"type:varchar(20);default:null"` // Only for drivers
+	CountryID           *uint          `json:"country_id"`
+	GenderID            *uint          `json:"gender_id"`
+	MustChangePassword  bool           `json:"must_change_password" gorm:"default:false"` // For admins created by super admin
+	TokenVersion        uint           `json:"-" gorm:"default:0"`
+	CreatedAt           time.Time      `json:"created_at"`
+	UpdatedAt           time.Time      `json:"updated_at"`
+	DeletedAt           gorm.DeletedAt `json:"-" gorm:"index"`
+
+	// Relationships
+	Country *Country `json:"country,omitempty" gorm:"foreignKey:CountryID"`
+	Gender  *Gender  `json:"gender,omitempty" gorm:"foreignKey:GenderID"`
 }
 
 // BeforeCreate is a GORM hook that hashes the password before creating a user
@@ -162,6 +169,8 @@ type CreateAdminRequest struct {
 	FirstName string `json:"first_name" binding:"required,min=1,max=100"`
 	LastName  string `json:"last_name" binding:"required,min=1,max=100"`
 	Phone     string `json:"phone" binding:"required,min=10,max=20"`
+	CountryID uint   `json:"country_id" binding:"required"`
+	GenderID  uint   `json:"gender_id" binding:"required"`
 }
 
 // ChangePasswordRequest represents a change password request payload
@@ -169,6 +178,37 @@ type ChangePasswordRequest struct {
 	Code        string `json:"code" binding:"required,min=4,max=10"`
 	OldPassword string `json:"old_password" binding:"required"`
 	NewPassword string `json:"new_password" binding:"required,min=6"`
+}
+
+// UpdateAdminRequest represents a request to update an admin user
+type UpdateAdminRequest struct {
+	Email     string `json:"email" binding:"omitempty,email"`
+	FirstName string `json:"first_name" binding:"omitempty,min=1,max=100"`
+	LastName  string `json:"last_name" binding:"omitempty,min=1,max=100"`
+	Phone     string `json:"phone" binding:"omitempty,min=10,max=20"`
+	CountryID *uint  `json:"country_id" binding:"omitempty"`
+	GenderID  *uint  `json:"gender_id" binding:"omitempty"`
+}
+
+// SuspendDriverRequest represents a request to suspend/activate a driver
+type SuspendDriverRequest struct {
+	IsActive bool `json:"is_active" binding:"required"`
+}
+
+// PaginationResponse represents a paginated response
+type PaginationResponse struct {
+	Data       interface{} `json:"data"`
+	Page       int         `json:"page"`
+	PageSize   int         `json:"page_size"`
+	TotalItems int64       `json:"total_items"`
+	TotalPages int         `json:"total_pages"`
+}
+
+// ReviewDocumentRequest represents a request to review a KYC document
+type ReviewDocumentRequest struct {
+	DocumentType     string                     `json:"document_type" binding:"required,oneof=selfie license_front license_back vehicle_photo vehicle_registration"`
+	Status           DocumentVerificationStatus `json:"status" binding:"required,oneof=approved rejected"`
+	RejectionReason  string                     `json:"rejection_reason" binding:"required_if=Status rejected"`
 }
 
 // Country represents a country in the system
@@ -224,6 +264,25 @@ type Gender struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// DocumentVerificationStatus represents the verification status of a document
+type DocumentVerificationStatus string
+
+const (
+	DocStatusPending  DocumentVerificationStatus = "pending"   // Uploaded, awaiting review
+	DocStatusApproved DocumentVerificationStatus = "approved"  // Verified and approved
+	DocStatusRejected DocumentVerificationStatus = "rejected"  // Rejected, needs reupload
+)
+
+// KYCStepStatus represents the overall status of a KYC step
+type KYCStepStatus string
+
+const (
+	StepStatusNotStarted KYCStepStatus = "not_started" // Step not started
+	StepStatusPending    KYCStepStatus = "pending"     // Documents uploaded, under review
+	StepStatusApproved   KYCStepStatus = "approved"    // Step approved
+	StepStatusRejected   KYCStepStatus = "rejected"    // Step rejected, needs correction
+)
+
 // DriverProfile stores KYC data for drivers across all steps
 type DriverProfile struct {
 	ID          uint `json:"id" gorm:"primaryKey"`
@@ -240,19 +299,43 @@ type DriverProfile struct {
 	HouseAddress  string     `json:"house_address"`
 	OfficeAddress string     `json:"office_address"`
 	DateOfBirth   *time.Time `json:"date_of_birth"`
+	Step1Status   KYCStepStatus `json:"step1_status" gorm:"type:varchar(20);default:'not_started'"`
+	Step1RejectionReason string `json:"step1_rejection_reason,omitempty"`
 
 	// Step 2: Selfie
-	SelfieURL string `json:"selfie_url"`
+	SelfieURL            string                     `json:"selfie_url"`
+	SelfieStatus         DocumentVerificationStatus `json:"selfie_status" gorm:"type:varchar(20);default:'pending'"`
+	SelfieRejectionReason string                    `json:"selfie_rejection_reason,omitempty"`
+	Step2Status          KYCStepStatus              `json:"step2_status" gorm:"type:varchar(20);default:'not_started'"`
 
 	// Step 3: Vehicle Documentation & Driver License
-	LicenseFrontURL string `json:"license_front_url"`
-	LicenseBackURL  string `json:"license_back_url"`
-	VehiclePhotoURL string `json:"vehicle_photo_url"`
+	LicenseFrontURL              string                     `json:"license_front_url"`
+	LicenseFrontStatus           DocumentVerificationStatus `json:"license_front_status" gorm:"type:varchar(20);default:'pending'"`
+	LicenseFrontRejectionReason  string                     `json:"license_front_rejection_reason,omitempty"`
+	
+	LicenseBackURL               string                     `json:"license_back_url"`
+	LicenseBackStatus            DocumentVerificationStatus `json:"license_back_status" gorm:"type:varchar(20);default:'pending'"`
+	LicenseBackRejectionReason   string                     `json:"license_back_rejection_reason,omitempty"`
+	
+	VehiclePhotoURL              string                     `json:"vehicle_photo_url"`
+	VehiclePhotoStatus           DocumentVerificationStatus `json:"vehicle_photo_status" gorm:"type:varchar(20);default:'pending'"`
+	VehiclePhotoRejectionReason  string                     `json:"vehicle_photo_rejection_reason,omitempty"`
+	
+	VehicleRegistrationURL       string                     `json:"vehicle_registration_url"`
+	VehicleRegistrationStatus    DocumentVerificationStatus `json:"vehicle_registration_status" gorm:"type:varchar(20);default:'pending'"`
+	VehicleRegistrationRejectionReason string                `json:"vehicle_registration_rejection_reason,omitempty"`
+	
+	Step3Status                  KYCStepStatus              `json:"step3_status" gorm:"type:varchar(20);default:'not_started'"`
+
+	// Admin review tracking
+	ReviewedBy   *uint      `json:"reviewed_by,omitempty"` // Admin user ID who last reviewed
+	ReviewedAt   *time.Time `json:"reviewed_at,omitempty"`
 
 	// Relationships
-	Country *Country `json:"country,omitempty" gorm:"foreignKey:CountryID"`
-	State   *State   `json:"state,omitempty" gorm:"foreignKey:StateID"`
-	Gender  *Gender  `json:"gender,omitempty" gorm:"foreignKey:GenderID"`
+	Country    *Country `json:"country,omitempty" gorm:"foreignKey:CountryID"`
+	State      *State   `json:"state,omitempty" gorm:"foreignKey:StateID"`
+	Gender     *Gender  `json:"gender,omitempty" gorm:"foreignKey:GenderID"`
+	ReviewedByUser *User `json:"reviewed_by_user,omitempty" gorm:"foreignKey:ReviewedBy"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`

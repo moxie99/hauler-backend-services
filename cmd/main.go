@@ -70,9 +70,24 @@ func main() {
 		// Change password
 		protected.POST("/auth/change-password/request-otp", api.RequestChangePasswordOTP)
 		protected.POST("/auth/change-password", api.ChangePassword)
+		// Logout
+		protected.POST("/auth/logout", api.Logout)
 	}
 
-	// Admin routes - Country and State management
+	// Super Admin routes
+	superAdmin := r.Group("/api/super-admin", api.JWTAuthMiddleware(), api.RequireSuperAdmin())
+	{
+		superAdmin.POST("/create-admin", api.CreateAdmin)
+		superAdmin.GET("/admins", api.GetAllAdmins)
+		superAdmin.PUT("/admins/:id", api.UpdateAdmin)
+		superAdmin.DELETE("/admins/:id", api.DeleteAdmin)
+		superAdmin.GET("/drivers", api.GetAllDrivers)
+		superAdmin.GET("/drivers/:id", api.GetDriverDetails)
+		superAdmin.PUT("/drivers/:id/suspend", api.SuspendDriver)
+		superAdmin.POST("/drivers/:id/review-document", api.ReviewDocument)
+	}
+
+	// Admin routes - Country and State management + Driver management
 	admin := r.Group("/api/admin", api.JWTAuthMiddleware(), api.RequireAdmin())
 	{
 		admin.POST("/countries", api.CreateCountry)
@@ -81,12 +96,10 @@ func main() {
 		admin.POST("/states", api.CreateState)
 		admin.PUT("/states/:id", api.UpdateState)
 		admin.DELETE("/states/:id", api.DeleteState)
-	}
-
-	// Super Admin routes
-	superAdmin := r.Group("/api/super-admin", api.JWTAuthMiddleware(), api.RequireSuperAdmin())
-	{
-		superAdmin.POST("/create-admin", api.CreateAdmin)
+		admin.GET("/drivers", api.GetAllDrivers)
+		admin.GET("/drivers/:id", api.GetDriverDetails)
+		admin.PUT("/drivers/:id/suspend", api.SuspendDriver)
+		admin.POST("/drivers/:id/review-document", api.ReviewDocument)
 	}
 
 	port := os.Getenv("PORT")
