@@ -1258,11 +1258,20 @@ func SubmitKYCStep1(c *gin.Context) {
 	profile.HouseAddress = req.HouseAddress
 	profile.OfficeAddress = req.OfficeAddress
 	profile.DateOfBirth = &dob
-	profile.Step1Status = StepStatusApproved // Step 1 is auto-approved (no documents)
+	profile.Step1Status = StepStatusApproved // Step 1 is auto-approved (no documents to review)
 
 	// Only advance step if currently at step 0
 	if profile.CurrentStep < 1 {
 		profile.CurrentStep = 1
+	}
+
+	// Update user KYC status
+	var user User
+	if err := DB.First(&user, userID).Error; err == nil {
+		if user.KYCStatus == "" || user.KYCStatus == KYCStatusPending {
+			user.KYCStatus = KYCStatusInProgress
+			DB.Save(&user)
+		}
 	}
 
 	if isNew {
@@ -1338,9 +1347,16 @@ func SubmitKYCStep2(c *gin.Context) {
 	// Update profile
 	profile.SelfieURL = selfieURL
 	profile.SelfieStatus = DocStatusPending // Set to pending for admin review
-	profile.Step2Status = StepStatusPending
+	profile.Step2Status = StepStatusPending // Step 2 is pending admin review
 	if profile.CurrentStep < 2 {
 		profile.CurrentStep = 2
+	}
+
+	// Update user KYC status
+	var user User
+	if err := DB.First(&user, userID).Error; err == nil {
+		user.KYCStatus = KYCStatusInProgress
+		DB.Save(&user)
 	}
 
 	if err := DB.Save(&profile).Error; err != nil {
@@ -1462,9 +1478,16 @@ func SubmitKYCStep3(c *gin.Context) {
 	profile.VehiclePhotoStatus = DocStatusPending
 	profile.VehicleRegistrationURL = vehicleRegistrationURL
 	profile.VehicleRegistrationStatus = DocStatusPending
-	profile.Step3Status = StepStatusPending
+	profile.Step3Status = StepStatusPending // Step 3 is pending admin review
 	if profile.CurrentStep < 3 {
 		profile.CurrentStep = 3
+	}
+
+	// Update user KYC status
+	var user User
+	if err := DB.First(&user, userID).Error; err == nil {
+		user.KYCStatus = KYCStatusInProgress
+		DB.Save(&user)
 	}
 
 	if err := DB.Save(&profile).Error; err != nil {
@@ -1567,7 +1590,7 @@ func InitDB() {
 	}
 
 	// Migrate the schema
-	if err = DB.AutoMigrate(&User{}, &VerificationCode{}, &Country{}, &State{}, &Gender{}, &DriverProfile{}); err != nil {
+	if err = DB.AutoMigrate(&User{}, &VerificationCode{}, &Country{}, &State{}, &Gender{}, &DriverProfile{}, &VehicleType{}, &Category{}, &LoadType{}); err != nil {
 		log.Fatal("Failed to migrate schema:", err)
 	}
 
@@ -2000,6 +2023,21 @@ func GetAllDrivers(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 	role, _ := c.Get("role")
 
+	// Define response structure
+	type DriverWithKYC struct {
+		ID                 uint       `json:"id"`
+		Email              string     `json:"email"`
+		FirstName          string     `json:"first_name"`
+		LastName           string     `json:"last_name"`
+		Phone              string     `json:"phone"`
+		Role               UserRole   `json:"role"`
+		IsActive           bool       `json:"is_active"`
+		KYCStatus          KYCStatus  `json:"kyc_status"`
+		CreatedAt          time.Time  `json:"created_at"`
+		UpdatedAt          time.Time  `json:"updated_at"`
+		KYCProfile         *DriverProfile `json:"kyc_profile,omitempty"`
+	}
+
 	// Get pagination parameters
 	page := 1
 	pageSize := 10
@@ -2039,8 +2077,29 @@ func GetAllDrivers(c *gin.Context) {
 			return
 		}
 
-		// Filter drivers by admin's country
-		query = query.Where("country_id = ?", *currentUser.CountryID)
+		// Get driver IDs from DriverProfile table that match admin's country
+		var driverProfiles []DriverProfile
+		DB.Where("country_id = ?", *currentUser.CountryID).Find(&driverProfiles)
+		
+		var driverIDs []uint
+		for _, profile := range driverProfiles {
+			driverIDs = append(driverIDs, profile.UserID)
+		}
+
+		// Filter drivers by these IDs
+		if len(driverIDs) > 0 {
+			query = query.Where("id IN ?", driverIDs)
+		} else {
+			// No drivers in this country, return empty result
+			ResponseJSON(c, http.StatusOK, "Drivers retrieved successfully", PaginationResponse{
+				Data:       []DriverWithKYC{},
+				Page:       page,
+				PageSize:   pageSize,
+				TotalItems: 0,
+				TotalPages: 0,
+			})
+			return
+		}
 	}
 
 	// Apply KYC status filter
@@ -2064,11 +2123,6 @@ func GetAllDrivers(c *gin.Context) {
 	}
 
 	// Fetch KYC profiles for each driver and apply additional filters
-	type DriverWithKYC struct {
-		User
-		KYCProfile *DriverProfile `json:"kyc_profile,omitempty"`
-	}
-
 	var driversWithKYC []DriverWithKYC
 	for _, driver := range drivers {
 		var profile DriverProfile
@@ -2076,7 +2130,16 @@ func GetAllDrivers(c *gin.Context) {
 			Where("user_id = ?", driver.ID).First(&profile).Error
 
 		driverWithKYC := DriverWithKYC{
-			User: driver,
+			ID:        driver.ID,
+			Email:     driver.Email,
+			FirstName: driver.FirstName,
+			LastName:  driver.LastName,
+			Phone:     driver.Phone,
+			Role:      driver.Role,
+			IsActive:  driver.IsActive,
+			KYCStatus: driver.KYCStatus,
+			CreatedAt: driver.CreatedAt,
+			UpdatedAt: driver.UpdatedAt,
 		}
 
 		if err == nil {
@@ -2142,8 +2205,6 @@ func GetAllDrivers(c *gin.Context) {
 			driverWithKYC.KYCProfile = &profile
 		}
 
-		driver.Password = ""
-		driverWithKYC.User = driver
 		driversWithKYC = append(driversWithKYC, driverWithKYC)
 	}
 
@@ -2192,7 +2253,14 @@ func SuspendDriver(c *gin.Context) {
 			return
 		}
 
-		if driver.CountryID == nil || *driver.CountryID != *currentUser.CountryID {
+		// Get driver's KYC profile to check country
+		var driverProfile DriverProfile
+		if err := DB.Where("user_id = ?", driver.ID).First(&driverProfile).Error; err != nil {
+			ResponseJSON(c, http.StatusNotFound, "Driver KYC profile not found", nil)
+			return
+		}
+
+		if driverProfile.CountryID == nil || *driverProfile.CountryID != *currentUser.CountryID {
 			ResponseJSON(c, http.StatusForbidden, "You can only suspend drivers in your country", nil)
 			return
 		}
@@ -2251,7 +2319,14 @@ func GetDriverDetails(c *gin.Context) {
 			return
 		}
 
-		if driver.CountryID == nil || *driver.CountryID != *currentUser.CountryID {
+		// Get driver's KYC profile to check country
+		var driverProfile DriverProfile
+		if err := DB.Where("user_id = ?", driver.ID).First(&driverProfile).Error; err != nil {
+			ResponseJSON(c, http.StatusNotFound, "Driver KYC profile not found", nil)
+			return
+		}
+
+		if driverProfile.CountryID == nil || *driverProfile.CountryID != *currentUser.CountryID {
 			ResponseJSON(c, http.StatusForbidden, "You can only view drivers in your country", nil)
 			return
 		}
@@ -2308,7 +2383,14 @@ func ReviewDocument(c *gin.Context) {
 			return
 		}
 
-		if driver.CountryID == nil || *driver.CountryID != *currentUser.CountryID {
+		// Get driver's KYC profile to check country
+		var driverProfile DriverProfile
+		if err := DB.Where("user_id = ?", driver.ID).First(&driverProfile).Error; err != nil {
+			ResponseJSON(c, http.StatusNotFound, "Driver KYC profile not found", nil)
+			return
+		}
+
+		if driverProfile.CountryID == nil || *driverProfile.CountryID != *currentUser.CountryID {
 			ResponseJSON(c, http.StatusForbidden, "You can only review drivers in your country", nil)
 			return
 		}
@@ -2463,4 +2545,573 @@ func Logout(c *gin.Context) {
 	ResponseJSON(c, http.StatusOK, "Logged out successfully. All sessions have been terminated.", gin.H{
 		"logged_out": true,
 	})
+}
+
+// CreateVehicleType creates a new vehicle type with image upload. Accessible by admins and super admins.
+func CreateVehicleType(c *gin.Context) {
+	// Parse form data
+	name := c.PostForm("name")
+	categoryID := c.PostForm("category_id")
+	description := c.PostForm("description")
+	maxPayloadKg := c.PostForm("max_payload_kg")
+	cargoLengthM := c.PostForm("cargo_length_m")
+	cargoWidthM := c.PostForm("cargo_width_m")
+	cargoHeightM := c.PostForm("cargo_height_m")
+	cargoVolumeM3 := c.PostForm("cargo_volume_m3")
+	isTemperatureControlled := c.PostForm("is_temperature_controlled") == "true"
+	isEnclosed := c.PostForm("is_enclosed") == "true"
+	hasTailLift := c.PostForm("has_tail_lift") == "true"
+	hasCrane := c.PostForm("has_crane") == "true"
+	requiresSpecialLicense := c.PostForm("requires_special_license") == "true"
+
+	// Validate required fields
+	if name == "" {
+		ResponseJSON(c, http.StatusBadRequest, "Name is required", nil)
+		return
+	}
+	if categoryID == "" {
+		ResponseJSON(c, http.StatusBadRequest, "Category ID is required", nil)
+		return
+	}
+	if maxPayloadKg == "" {
+		ResponseJSON(c, http.StatusBadRequest, "Max payload is required", nil)
+		return
+	}
+
+	// Parse category ID
+	var catID uint
+	fmt.Sscanf(categoryID, "%d", &catID)
+
+	// Validate category exists
+	var category Category
+	if err := DB.First(&category, catID).Error; err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Invalid category ID", nil)
+		return
+	}
+
+	// Check if vehicle type name already exists
+	var existing VehicleType
+	if err := DB.Where("name = ?", name).First(&existing).Error; err == nil {
+		ResponseJSON(c, http.StatusConflict, "Vehicle type with this name already exists", nil)
+		return
+	}
+
+	// Parse numeric fields
+	var payload, length, width, height, volume float64
+	fmt.Sscanf(maxPayloadKg, "%f", &payload)
+	fmt.Sscanf(cargoLengthM, "%f", &length)
+	fmt.Sscanf(cargoWidthM, "%f", &width)
+	fmt.Sscanf(cargoHeightM, "%f", &height)
+	fmt.Sscanf(cargoVolumeM3, "%f", &volume)
+
+	// Handle image upload
+	var imageURL string
+	file, err := c.FormFile("image")
+	if err == nil {
+		// Validate image file
+		if err := ValidateImageFile(file, 5); err != nil {
+			ResponseJSON(c, http.StatusBadRequest, "image: "+err.Error(), nil)
+			return
+		}
+
+		// Upload to S3
+		imageURL, err = UploadFileToS3(file, "vehicle-types")
+		if err != nil {
+			log.Printf("Failed to upload vehicle type image to S3: %v", err)
+			ResponseJSON(c, http.StatusInternalServerError, "Failed to upload vehicle image", nil)
+			return
+		}
+	}
+
+	vehicleType := VehicleType{
+		Name:                    name,
+		CategoryID:              catID,
+		Description:             description,
+		ImageURL:                imageURL,
+		MaxPayloadKg:            payload,
+		CargoLengthM:            length,
+		CargoWidthM:             width,
+		CargoHeightM:            height,
+		CargoVolumeM3:           volume,
+		IsTemperatureControlled: isTemperatureControlled,
+		IsEnclosed:              isEnclosed,
+		HasTailLift:             hasTailLift,
+		HasCrane:                hasCrane,
+		RequiresSpecialLicense:  requiresSpecialLicense,
+		IsActive:                true,
+	}
+
+	if err := DB.Create(&vehicleType).Error; err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to create vehicle type", nil)
+		return
+	}
+
+	// Preload category for response
+	DB.Preload("Category").First(&vehicleType, vehicleType.ID)
+
+	ResponseJSON(c, http.StatusCreated, "Vehicle type created successfully", vehicleType)
+}
+// GetAllVehicleTypes returns all vehicle types with optional filtering.
+func GetAllVehicleTypes(c *gin.Context) {
+	categoryID := c.Query("category_id")
+	activeOnly := c.Query("active_only") == "true"
+
+	query := DB.Model(&VehicleType{}).Preload("Category")
+
+	if categoryID != "" {
+		query = query.Where("category_id = ?", categoryID)
+	}
+
+	if activeOnly {
+		query = query.Where("is_active = ?", true)
+	}
+
+	var vehicleTypes []VehicleType
+	if err := query.Order("name ASC").Find(&vehicleTypes).Error; err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to fetch vehicle types", nil)
+		return
+	}
+
+	ResponseJSON(c, http.StatusOK, "Vehicle types retrieved successfully", vehicleTypes)
+}
+
+// GetVehicleType returns a single vehicle type by ID.
+func GetVehicleType(c *gin.Context) {
+	vehicleTypeID := c.Param("id")
+
+	var vehicleType VehicleType
+	if err := DB.Preload("Category").First(&vehicleType, vehicleTypeID).Error; err != nil {
+		ResponseJSON(c, http.StatusNotFound, "Vehicle type not found", nil)
+		return
+	}
+
+	ResponseJSON(c, http.StatusOK, "Vehicle type retrieved successfully", vehicleType)
+}
+
+// UpdateVehicleType updates an existing vehicle type with optional image upload. Accessible by admins and super admins.
+func UpdateVehicleType(c *gin.Context) {
+	vehicleTypeID := c.Param("id")
+
+	var vehicleType VehicleType
+	if err := DB.First(&vehicleType, vehicleTypeID).Error; err != nil {
+		ResponseJSON(c, http.StatusNotFound, "Vehicle type not found", nil)
+		return
+	}
+
+	// Parse form data
+	name := c.PostForm("name")
+	categoryID := c.PostForm("category_id")
+	description := c.PostForm("description")
+	maxPayloadKg := c.PostForm("max_payload_kg")
+	cargoLengthM := c.PostForm("cargo_length_m")
+	cargoWidthM := c.PostForm("cargo_width_m")
+	cargoHeightM := c.PostForm("cargo_height_m")
+	cargoVolumeM3 := c.PostForm("cargo_volume_m3")
+	isTemperatureControlled := c.PostForm("is_temperature_controlled")
+	isEnclosed := c.PostForm("is_enclosed")
+	hasTailLift := c.PostForm("has_tail_lift")
+	hasCrane := c.PostForm("has_crane")
+	requiresSpecialLicense := c.PostForm("requires_special_license")
+	isActive := c.PostForm("is_active")
+
+	// Check if name is being updated and if it already exists
+	if name != "" && name != vehicleType.Name {
+		var existing VehicleType
+		if err := DB.Where("name = ?", name).First(&existing).Error; err == nil {
+			ResponseJSON(c, http.StatusConflict, "Vehicle type with this name already exists", nil)
+			return
+		}
+		vehicleType.Name = name
+	}
+
+	// Update category if provided
+	if categoryID != "" {
+		var catID uint
+		fmt.Sscanf(categoryID, "%d", &catID)
+		
+		// Validate category exists
+		var category Category
+		if err := DB.First(&category, catID).Error; err != nil {
+			ResponseJSON(c, http.StatusBadRequest, "Invalid category ID", nil)
+			return
+		}
+		vehicleType.CategoryID = catID
+	}
+
+	// Update description if provided
+	if description != "" {
+		vehicleType.Description = description
+	}
+
+	// Handle image upload if provided
+	file, err := c.FormFile("image")
+	if err == nil {
+		// Validate image file
+		if err := ValidateImageFile(file, 5); err != nil {
+			ResponseJSON(c, http.StatusBadRequest, "image: "+err.Error(), nil)
+			return
+		}
+
+		// Upload to S3
+		imageURL, err := UploadFileToS3(file, "vehicle-types")
+		if err != nil {
+			log.Printf("Failed to upload vehicle type image to S3: %v", err)
+			ResponseJSON(c, http.StatusInternalServerError, "Failed to upload vehicle image", nil)
+			return
+		}
+		vehicleType.ImageURL = imageURL
+	}
+
+	// Update numeric fields if provided
+	if maxPayloadKg != "" {
+		var payload float64
+		fmt.Sscanf(maxPayloadKg, "%f", &payload)
+		vehicleType.MaxPayloadKg = payload
+	}
+	if cargoLengthM != "" {
+		var length float64
+		fmt.Sscanf(cargoLengthM, "%f", &length)
+		vehicleType.CargoLengthM = length
+	}
+	if cargoWidthM != "" {
+		var width float64
+		fmt.Sscanf(cargoWidthM, "%f", &width)
+		vehicleType.CargoWidthM = width
+	}
+	if cargoHeightM != "" {
+		var height float64
+		fmt.Sscanf(cargoHeightM, "%f", &height)
+		vehicleType.CargoHeightM = height
+	}
+	if cargoVolumeM3 != "" {
+		var volume float64
+		fmt.Sscanf(cargoVolumeM3, "%f", &volume)
+		vehicleType.CargoVolumeM3 = volume
+	}
+
+	// Update boolean fields if provided
+	if isTemperatureControlled != "" {
+		vehicleType.IsTemperatureControlled = isTemperatureControlled == "true"
+	}
+	if isEnclosed != "" {
+		vehicleType.IsEnclosed = isEnclosed == "true"
+	}
+	if hasTailLift != "" {
+		vehicleType.HasTailLift = hasTailLift == "true"
+	}
+	if hasCrane != "" {
+		vehicleType.HasCrane = hasCrane == "true"
+	}
+	if requiresSpecialLicense != "" {
+		vehicleType.RequiresSpecialLicense = requiresSpecialLicense == "true"
+	}
+	if isActive != "" {
+		vehicleType.IsActive = isActive == "true"
+	}
+
+	if err := DB.Save(&vehicleType).Error; err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to update vehicle type", nil)
+		return
+	}
+
+	// Preload category for response
+	DB.Preload("Category").First(&vehicleType, vehicleType.ID)
+
+	ResponseJSON(c, http.StatusOK, "Vehicle type updated successfully", vehicleType)
+}
+
+// DeleteVehicleType deletes a vehicle type. Accessible by admins and super admins.
+func DeleteVehicleType(c *gin.Context) {
+	vehicleTypeID := c.Param("id")
+
+	var vehicleType VehicleType
+	if err := DB.First(&vehicleType, vehicleTypeID).Error; err != nil {
+		ResponseJSON(c, http.StatusNotFound, "Vehicle type not found", nil)
+		return
+	}
+
+	if err := DB.Delete(&vehicleType).Error; err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to delete vehicle type", nil)
+		return
+	}
+
+	ResponseJSON(c, http.StatusOK, "Vehicle type deleted successfully", nil)
+}
+
+// CreateCategory creates a new vehicle category. Accessible by admins and super admins.
+func CreateCategory(c *gin.Context) {
+	var req CreateCategoryRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Invalid request payload: "+err.Error(), nil)
+		return
+	}
+
+	// Check if category name already exists
+	var existingByName Category
+	if err := DB.Where("name = ?", req.Name).First(&existingByName).Error; err == nil {
+		ResponseJSON(c, http.StatusConflict, "Category with this name already exists", nil)
+		return
+	}
+
+	// Check if category code already exists
+	var existingByCode Category
+	if err := DB.Where("code = ?", req.Code).First(&existingByCode).Error; err == nil {
+		ResponseJSON(c, http.StatusConflict, "Category with this code already exists", nil)
+		return
+	}
+
+	category := Category{
+		Name:        req.Name,
+		Code:        req.Code,
+		Description: req.Description,
+		IsActive:    true,
+	}
+
+	if err := DB.Create(&category).Error; err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to create category", nil)
+		return
+	}
+
+	ResponseJSON(c, http.StatusCreated, "Category created successfully", category)
+}
+
+// GetAllCategories returns all vehicle categories with optional filtering.
+func GetAllCategories(c *gin.Context) {
+	activeOnly := c.Query("active_only") == "true"
+
+	query := DB.Model(&Category{})
+
+	if activeOnly {
+		query = query.Where("is_active = ?", true)
+	}
+
+	var categories []Category
+	if err := query.Order("name ASC").Find(&categories).Error; err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to fetch categories", nil)
+		return
+	}
+
+	ResponseJSON(c, http.StatusOK, "Categories retrieved successfully", categories)
+}
+
+// GetCategory returns a single category by ID.
+func GetCategory(c *gin.Context) {
+	categoryID := c.Param("id")
+
+	var category Category
+	if err := DB.First(&category, categoryID).Error; err != nil {
+		ResponseJSON(c, http.StatusNotFound, "Category not found", nil)
+		return
+	}
+
+	ResponseJSON(c, http.StatusOK, "Category retrieved successfully", category)
+}
+
+// UpdateCategory updates an existing vehicle category. Accessible by admins and super admins.
+func UpdateCategory(c *gin.Context) {
+	categoryID := c.Param("id")
+
+	var category Category
+	if err := DB.First(&category, categoryID).Error; err != nil {
+		ResponseJSON(c, http.StatusNotFound, "Category not found", nil)
+		return
+	}
+
+	var req UpdateCategoryRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Invalid request payload: "+err.Error(), nil)
+		return
+	}
+
+	// Check if name is being updated and if it already exists
+	if req.Name != "" && req.Name != category.Name {
+		var existing Category
+		if err := DB.Where("name = ?", req.Name).First(&existing).Error; err == nil {
+			ResponseJSON(c, http.StatusConflict, "Category with this name already exists", nil)
+			return
+		}
+		category.Name = req.Name
+	}
+
+	// Check if code is being updated and if it already exists
+	if req.Code != "" && req.Code != category.Code {
+		var existing Category
+		if err := DB.Where("code = ?", req.Code).First(&existing).Error; err == nil {
+			ResponseJSON(c, http.StatusConflict, "Category with this code already exists", nil)
+			return
+		}
+		category.Code = req.Code
+	}
+
+	// Update description if provided
+	if req.Description != "" {
+		category.Description = req.Description
+	}
+
+	// Update is_active if provided
+	if req.IsActive != nil {
+		category.IsActive = *req.IsActive
+	}
+
+	if err := DB.Save(&category).Error; err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to update category", nil)
+		return
+	}
+
+	ResponseJSON(c, http.StatusOK, "Category updated successfully", category)
+}
+
+// DeleteCategory deletes a vehicle category. Accessible by admins and super admins.
+func DeleteCategory(c *gin.Context) {
+	categoryID := c.Param("id")
+
+	var category Category
+	if err := DB.First(&category, categoryID).Error; err != nil {
+		ResponseJSON(c, http.StatusNotFound, "Category not found", nil)
+		return
+	}
+
+	// Check if any vehicle types are using this category
+	var count int64
+	DB.Model(&VehicleType{}).Where("category_id = ?", category.ID).Count(&count)
+	if count > 0 {
+		ResponseJSON(c, http.StatusConflict, "Cannot delete category. It is being used by vehicle types", nil)
+		return
+	}
+
+	if err := DB.Delete(&category).Error; err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to delete category", nil)
+		return
+	}
+
+	ResponseJSON(c, http.StatusOK, "Category deleted successfully", nil)
+}
+
+// CreateLoadType creates a new load type. Accessible by admins and super admins.
+func CreateLoadType(c *gin.Context) {
+	var req CreateLoadTypeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Invalid request payload: "+err.Error(), nil)
+		return
+	}
+
+	// Check if load type name already exists
+	var existing LoadType
+	if err := DB.Where("name = ?", req.Name).First(&existing).Error; err == nil {
+		ResponseJSON(c, http.StatusConflict, "Load type with this name already exists", nil)
+		return
+	}
+
+	loadType := LoadType{
+		Name:                    req.Name,
+		Description:             req.Description,
+		RequiresSpecialHandling: req.RequiresSpecialHandling,
+		IsActive:                true,
+	}
+
+	if err := DB.Create(&loadType).Error; err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to create load type", nil)
+		return
+	}
+
+	ResponseJSON(c, http.StatusCreated, "Load type created successfully", loadType)
+}
+
+// GetAllLoadTypes returns all load types with optional filtering.
+func GetAllLoadTypes(c *gin.Context) {
+	activeOnly := c.Query("active_only") == "true"
+
+	query := DB.Model(&LoadType{})
+
+	if activeOnly {
+		query = query.Where("is_active = ?", true)
+	}
+
+	var loadTypes []LoadType
+	if err := query.Order("name ASC").Find(&loadTypes).Error; err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to fetch load types", nil)
+		return
+	}
+
+	ResponseJSON(c, http.StatusOK, "Load types retrieved successfully", loadTypes)
+}
+
+// GetLoadType returns a single load type by ID.
+func GetLoadType(c *gin.Context) {
+	loadTypeID := c.Param("id")
+
+	var loadType LoadType
+	if err := DB.First(&loadType, loadTypeID).Error; err != nil {
+		ResponseJSON(c, http.StatusNotFound, "Load type not found", nil)
+		return
+	}
+
+	ResponseJSON(c, http.StatusOK, "Load type retrieved successfully", loadType)
+}
+
+// UpdateLoadType updates an existing load type. Accessible by admins and super admins.
+func UpdateLoadType(c *gin.Context) {
+	loadTypeID := c.Param("id")
+
+	var loadType LoadType
+	if err := DB.First(&loadType, loadTypeID).Error; err != nil {
+		ResponseJSON(c, http.StatusNotFound, "Load type not found", nil)
+		return
+	}
+
+	var req UpdateLoadTypeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Invalid request payload: "+err.Error(), nil)
+		return
+	}
+
+	// Check if name is being updated and if it already exists
+	if req.Name != "" && req.Name != loadType.Name {
+		var existing LoadType
+		if err := DB.Where("name = ?", req.Name).First(&existing).Error; err == nil {
+			ResponseJSON(c, http.StatusConflict, "Load type with this name already exists", nil)
+			return
+		}
+		loadType.Name = req.Name
+	}
+
+	// Update description if provided
+	if req.Description != "" {
+		loadType.Description = req.Description
+	}
+
+	// Update requires_special_handling if provided
+	if req.RequiresSpecialHandling != nil {
+		loadType.RequiresSpecialHandling = *req.RequiresSpecialHandling
+	}
+
+	// Update is_active if provided
+	if req.IsActive != nil {
+		loadType.IsActive = *req.IsActive
+	}
+
+	if err := DB.Save(&loadType).Error; err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to update load type", nil)
+		return
+	}
+
+	ResponseJSON(c, http.StatusOK, "Load type updated successfully", loadType)
+}
+
+// DeleteLoadType deletes a load type. Accessible by admins and super admins.
+func DeleteLoadType(c *gin.Context) {
+	loadTypeID := c.Param("id")
+
+	var loadType LoadType
+	if err := DB.First(&loadType, loadTypeID).Error; err != nil {
+		ResponseJSON(c, http.StatusNotFound, "Load type not found", nil)
+		return
+	}
+
+	if err := DB.Delete(&loadType).Error; err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to delete load type", nil)
+		return
+	}
+
+	ResponseJSON(c, http.StatusOK, "Load type deleted successfully", nil)
 }

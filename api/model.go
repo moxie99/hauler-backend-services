@@ -211,6 +211,135 @@ type ReviewDocumentRequest struct {
 	RejectionReason  string                     `json:"rejection_reason" binding:"required_if=Status rejected"`
 }
 
+// Category represents a vehicle category in the system
+type Category struct {
+	ID          uint      `json:"id" gorm:"primaryKey"`
+	Name        string    `json:"name" gorm:"uniqueIndex;not null"`
+	Code        string    `json:"code" gorm:"uniqueIndex;not null;type:varchar(50)"` // e.g., "motorcycle", "van"
+	Description string    `json:"description"`
+	IsActive    bool      `json:"is_active" gorm:"default:true"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// LoadType represents a type of load/cargo (fragile, liquid, perishable, hazardous, oversized)
+type LoadType struct {
+	ID                      uint      `json:"id" gorm:"primaryKey"`
+	Name                    string    `json:"name" gorm:"uniqueIndex;not null"` // e.g., "Fragile", "Liquid", "Perishable"
+	Description             string    `json:"description"`
+	RequiresSpecialHandling bool      `json:"requires_special_handling" gorm:"default:false"`
+	IsActive                bool      `json:"is_active" gorm:"default:true"`
+	CreatedAt               time.Time `json:"created_at"`
+	UpdatedAt               time.Time `json:"updated_at"`
+}
+
+// CreateCategoryRequest represents a request to create a category
+type CreateCategoryRequest struct {
+	Name        string `json:"name" binding:"required,min=2,max=100"`
+	Code        string `json:"code" binding:"required,min=2,max=50"`
+	Description string `json:"description" binding:"omitempty,max=500"`
+}
+
+// UpdateCategoryRequest represents a request to update a category
+type UpdateCategoryRequest struct {
+	Name        string `json:"name" binding:"omitempty,min=2,max=100"`
+	Code        string `json:"code" binding:"omitempty,min=2,max=50"`
+	Description string `json:"description" binding:"omitempty,max=500"`
+	IsActive    *bool  `json:"is_active"`
+}
+
+// CreateLoadTypeRequest represents a request to create a load type
+type CreateLoadTypeRequest struct {
+	Name                    string `json:"name" binding:"required,min=2,max=100"`
+	Description             string `json:"description" binding:"omitempty,max=500"`
+	RequiresSpecialHandling bool   `json:"requires_special_handling"`
+}
+
+// UpdateLoadTypeRequest represents a request to update a load type
+type UpdateLoadTypeRequest struct {
+	Name                    string `json:"name" binding:"omitempty,min=2,max=100"`
+	Description             string `json:"description" binding:"omitempty,max=500"`
+	RequiresSpecialHandling *bool  `json:"requires_special_handling"`
+	IsActive                *bool  `json:"is_active"`
+}
+
+// VehicleCategory represents the category of a vehicle
+type VehicleCategory string
+
+const (
+	CategoryMotorcycle   VehicleCategory = "motorcycle"
+	CategoryLCV          VehicleCategory = "lcv"           // Light Commercial Vehicle
+	CategoryMediumTruck  VehicleCategory = "medium_truck"
+	CategoryHeavyTruck   VehicleCategory = "heavy_truck"
+	CategoryVan          VehicleCategory = "van"
+	CategoryPickup       VehicleCategory = "pickup"
+	CategoryFlatbed      VehicleCategory = "flatbed"
+	CategoryRefrigerated VehicleCategory = "refrigerated"
+	CategoryTanker       VehicleCategory = "tanker"
+)
+
+// VehicleType represents a type of vehicle available for hauling
+type VehicleType struct {
+	ID                       uint      `json:"id" gorm:"primaryKey"`
+	Name                     string    `json:"name" gorm:"not null;uniqueIndex"`
+	CategoryID               uint      `json:"category_id" gorm:"not null"`
+	Description              string    `json:"description"`
+	ImageURL                 string    `json:"image_url"`
+	MaxPayloadKg             float64   `json:"max_payload_kg"`
+	CargoLengthM             float64   `json:"cargo_length_m"`
+	CargoWidthM              float64   `json:"cargo_width_m"`
+	CargoHeightM             float64   `json:"cargo_height_m"`
+	CargoVolumeM3            float64   `json:"cargo_volume_m3"`
+	IsTemperatureControlled  bool      `json:"is_temperature_controlled" gorm:"default:false"`
+	IsEnclosed               bool      `json:"is_enclosed" gorm:"default:true"`
+	HasTailLift              bool      `json:"has_tail_lift" gorm:"default:false"`
+	HasCrane                 bool      `json:"has_crane" gorm:"default:false"`
+	RequiresSpecialLicense   bool      `json:"requires_special_license" gorm:"default:false"`
+	IsActive                 bool      `json:"is_active" gorm:"default:true"`
+	CreatedAt                time.Time `json:"created_at"`
+	UpdatedAt                time.Time `json:"updated_at"`
+
+	// Relationships
+	Category *Category `json:"category,omitempty" gorm:"foreignKey:CategoryID"`
+}
+
+// CreateVehicleTypeRequest represents a request to create a vehicle type
+type CreateVehicleTypeRequest struct {
+	Name                    string  `json:"name" binding:"required,min=2,max=100"`
+	CategoryID              uint    `json:"category_id" binding:"required"`
+	Description             string  `json:"description" binding:"omitempty,max=500"`
+	ImageURL                string  `json:"image_url" binding:"omitempty,url"`
+	MaxPayloadKg            float64 `json:"max_payload_kg" binding:"required,min=0"`
+	CargoLengthM            float64 `json:"cargo_length_m" binding:"omitempty,min=0"`
+	CargoWidthM             float64 `json:"cargo_width_m" binding:"omitempty,min=0"`
+	CargoHeightM            float64 `json:"cargo_height_m" binding:"omitempty,min=0"`
+	CargoVolumeM3           float64 `json:"cargo_volume_m3" binding:"omitempty,min=0"`
+	IsTemperatureControlled bool    `json:"is_temperature_controlled"`
+	IsEnclosed              bool    `json:"is_enclosed"`
+	HasTailLift             bool    `json:"has_tail_lift"`
+	HasCrane                bool    `json:"has_crane"`
+	RequiresSpecialLicense  bool    `json:"requires_special_license"`
+}
+
+// UpdateVehicleTypeRequest represents a request to update a vehicle type
+type UpdateVehicleTypeRequest struct {
+	Name                    string   `json:"name" binding:"omitempty,min=2,max=100"`
+	CategoryID              *uint    `json:"category_id" binding:"omitempty"`
+	Description             string   `json:"description" binding:"omitempty,max=500"`
+	ImageURL                string   `json:"image_url" binding:"omitempty,url"`
+	MaxPayloadKg            *float64 `json:"max_payload_kg" binding:"omitempty,min=0"`
+	CargoLengthM            *float64 `json:"cargo_length_m" binding:"omitempty,min=0"`
+	CargoWidthM             *float64 `json:"cargo_width_m" binding:"omitempty,min=0"`
+	CargoHeightM            *float64 `json:"cargo_height_m" binding:"omitempty,min=0"`
+	CargoVolumeM3           *float64 `json:"cargo_volume_m3" binding:"omitempty,min=0"`
+	IsTemperatureControlled *bool    `json:"is_temperature_controlled"`
+	IsEnclosed              *bool    `json:"is_enclosed"`
+	HasTailLift             *bool    `json:"has_tail_lift"`
+	HasCrane                *bool    `json:"has_crane"`
+	RequiresSpecialLicense  *bool    `json:"requires_special_license"`
+	IsActive                *bool    `json:"is_active"`
+}
+
 // Country represents a country in the system
 type Country struct {
 	ID        uint      `json:"id" gorm:"primaryKey"`

@@ -46,6 +46,12 @@ func main() {
 	r.GET("/api/countries", api.GetCountries)
 	r.GET("/api/countries/:id/states", api.GetStatesByCountry)
 	r.GET("/api/genders", api.GetGenders)
+	r.GET("/api/vehicle-types", api.GetAllVehicleTypes)
+	r.GET("/api/vehicle-types/:id", api.GetVehicleType)
+	r.GET("/api/categories", api.GetAllCategories)
+	r.GET("/api/categories/:id", api.GetCategory)
+	r.GET("/api/load-types", api.GetAllLoadTypes)
+	r.GET("/api/load-types/:id", api.GetLoadType)
 
 	// Password reset flow
 	r.POST("/api/auth/forgot-password", api.ForgotPassword)
@@ -100,6 +106,15 @@ func main() {
 		admin.GET("/drivers/:id", api.GetDriverDetails)
 		admin.PUT("/drivers/:id/suspend", api.SuspendDriver)
 		admin.POST("/drivers/:id/review-document", api.ReviewDocument)
+		admin.POST("/vehicle-types", api.CreateVehicleType)
+		admin.PUT("/vehicle-types/:id", api.UpdateVehicleType)
+		admin.DELETE("/vehicle-types/:id", api.DeleteVehicleType)
+		admin.POST("/categories", api.CreateCategory)
+		admin.PUT("/categories/:id", api.UpdateCategory)
+		admin.DELETE("/categories/:id", api.DeleteCategory)
+		admin.POST("/load-types", api.CreateLoadType)
+		admin.PUT("/load-types/:id", api.UpdateLoadType)
+		admin.DELETE("/load-types/:id", api.DeleteLoadType)
 	}
 
 	port := os.Getenv("PORT")
