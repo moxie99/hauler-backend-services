@@ -233,6 +233,14 @@ type LoadType struct {
 	UpdatedAt               time.Time `json:"updated_at"`
 }
 
+// DriverLoadType represents the many-to-many relationship between drivers and load types
+type DriverLoadType struct {
+	ID         uint      `json:"id" gorm:"primaryKey"`
+	DriverID   uint      `json:"driver_id" gorm:"not null;index"`
+	LoadTypeID uint      `json:"load_type_id" gorm:"not null;index"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
 // CreateCategoryRequest represents a request to create a category
 type CreateCategoryRequest struct {
 	Name        string `json:"name" binding:"required,min=2,max=100"`
@@ -456,15 +464,23 @@ type DriverProfile struct {
 	
 	Step3Status                  KYCStepStatus              `json:"step3_status" gorm:"type:varchar(20);default:'not_started'"`
 
+	// Step 4: Work Preferences
+	DaysOfWork                   string    `json:"days_of_work" gorm:"type:jsonb"` // JSON array: ["Monday", "Tuesday", ...]
+	VehicleTypeID                *uint     `json:"vehicle_type_id"` // Single vehicle type
+	WorkStartTime                string    `json:"work_start_time"` // Format: "09:00"
+	WorkEndTime                  string    `json:"work_end_time"`   // Format: "17:00"
+	Step4Status                  KYCStepStatus `json:"step4_status" gorm:"type:varchar(20);default:'not_started'"`
+
 	// Admin review tracking
 	ReviewedBy   *uint      `json:"reviewed_by,omitempty"` // Admin user ID who last reviewed
 	ReviewedAt   *time.Time `json:"reviewed_at,omitempty"`
 
 	// Relationships
-	Country    *Country `json:"country,omitempty" gorm:"foreignKey:CountryID"`
-	State      *State   `json:"state,omitempty" gorm:"foreignKey:StateID"`
-	Gender     *Gender  `json:"gender,omitempty" gorm:"foreignKey:GenderID"`
-	ReviewedByUser *User `json:"reviewed_by_user,omitempty" gorm:"foreignKey:ReviewedBy"`
+	Country       *Country     `json:"country,omitempty" gorm:"foreignKey:CountryID"`
+	State         *State       `json:"state,omitempty" gorm:"foreignKey:StateID"`
+	Gender        *Gender      `json:"gender,omitempty" gorm:"foreignKey:GenderID"`
+	VehicleType   *VehicleType `json:"vehicle_type,omitempty" gorm:"foreignKey:VehicleTypeID"`
+	ReviewedByUser *User       `json:"reviewed_by_user,omitempty" gorm:"foreignKey:ReviewedBy"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -481,6 +497,15 @@ type KYCStep1Request struct {
 	HouseAddress  string `json:"houseAddress" binding:"required,min=5,max=500"`
 	OfficeAddress string `json:"officeAddress" binding:"required,min=5,max=500"`
 	DateOfBirth   string `json:"dateOfBirth" binding:"required"`
+}
+
+// KYCStep4Request represents the request payload for KYC step 4
+type KYCStep4Request struct {
+	DaysOfWork      []string `json:"daysOfWork" binding:"required,min=1"`      // ["Monday", "Tuesday", ...]
+	VehicleTypeID   uint     `json:"vehicleTypeId" binding:"required"`         // Single vehicle type ID
+	LoadTypeIDs     []uint   `json:"loadTypeIds"`                              // Optional: [1, 2] or empty for "All"
+	WorkStartTime   string   `json:"workStartTime" binding:"required"`         // "09:00"
+	WorkEndTime     string   `json:"workEndTime" binding:"required"`           // "17:00"
 }
 
 // ResponseJSON sends a standardized JSON response

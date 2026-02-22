@@ -6,6 +6,7 @@ It includes functionality for user authentication, role-based access control, an
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -1504,6 +1505,125 @@ func SubmitKYCStep3(c *gin.Context) {
 	})
 }
 
+// SubmitKYCStep4 handles submission of KYC step 4 (Work Preferences).
+// It accepts days of work, vehicle types, load types, and work hours.
+func SubmitKYCStep4(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		ResponseJSON(c, http.StatusUnauthorized, "User not authenticated", nil)
+		return
+	}
+
+	// Verify user is a driver
+	role, _ := c.Get("role")
+	if UserRole(role.(string)) != RoleDriver {
+		ResponseJSON(c, http.StatusForbidden, "Only drivers can submit KYC", nil)
+		return
+	}
+
+	var req KYCStep4Request
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Invalid request payload: "+err.Error(), nil)
+		return
+	}
+
+	// Validate days of work
+	validDays := map[string]bool{
+		"Monday": true, "Tuesday": true, "Wednesday": true, "Thursday": true,
+		"Friday": true, "Saturday": true, "Sunday": true,
+	}
+	for _, day := range req.DaysOfWork {
+		if !validDays[day] {
+			ResponseJSON(c, http.StatusBadRequest, "Invalid day: "+day, nil)
+			return
+		}
+	}
+
+	// Validate vehicle type exists
+	var vt VehicleType
+	if err := DB.First(&vt, req.VehicleTypeID).Error; err != nil {
+		ResponseJSON(c, http.StatusBadRequest, fmt.Sprintf("Invalid vehicle type ID: %d", req.VehicleTypeID), nil)
+		return
+	}
+
+	// Validate load types if provided
+	if len(req.LoadTypeIDs) > 0 {
+		for _, ltID := range req.LoadTypeIDs {
+			var lt LoadType
+			if err := DB.First(&lt, ltID).Error; err != nil {
+				ResponseJSON(c, http.StatusBadRequest, fmt.Sprintf("Invalid load type ID: %d", ltID), nil)
+				return
+			}
+		}
+	}
+
+	// Get or create driver profile
+	var profile DriverProfile
+	if err := DB.Where("user_id = ?", userID).First(&profile).Error; err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Please complete previous KYC steps first", nil)
+		return
+	}
+
+	// Convert days of work to JSON
+	daysJSON, err := json.Marshal(req.DaysOfWork)
+	if err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to process days of work", nil)
+		return
+	}
+
+	// Update profile with Step 4 data
+	profile.DaysOfWork = string(daysJSON)
+	profile.VehicleTypeID = &req.VehicleTypeID
+	profile.WorkStartTime = req.WorkStartTime
+	profile.WorkEndTime = req.WorkEndTime
+	profile.Step4Status = StepStatusApproved // Step 4 auto-approved (no admin review needed)
+	if profile.CurrentStep < 4 {
+		profile.CurrentStep = 4
+	}
+
+	if err := DB.Save(&profile).Error; err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to update KYC profile", nil)
+		return
+	}
+
+	// Delete existing load type associations
+	DB.Where("driver_id = ?", userID).Delete(&DriverLoadType{})
+
+	// Create new load type associations (if provided)
+	if len(req.LoadTypeIDs) > 0 {
+		for _, ltID := range req.LoadTypeIDs {
+			dlt := DriverLoadType{
+				DriverID:   userID.(uint),
+				LoadTypeID: ltID,
+			}
+			DB.Create(&dlt)
+		}
+	}
+
+	// Reload profile with relationships
+	DB.Preload("Country").Preload("State").Preload("Gender").Preload("VehicleType.Category").First(&profile, profile.ID)
+
+	// Get load types
+	var loadTypes []LoadType
+	if len(req.LoadTypeIDs) > 0 {
+		DB.Joins("JOIN driver_load_types ON driver_load_types.load_type_id = load_types.id").
+			Where("driver_load_types.driver_id = ?", userID).
+			Find(&loadTypes)
+	}
+
+	// Parse days of work for response
+	var daysOfWork []string
+	json.Unmarshal([]byte(profile.DaysOfWork), &daysOfWork)
+
+	ResponseJSON(c, http.StatusOK, "KYC Step 4 completed successfully", gin.H{
+		"profile":      profile,
+		"current_step": profile.CurrentStep,
+		"total_steps":  5,
+		"load_types":   loadTypes,
+		"days_of_work": daysOfWork,
+	})
+}
+
 // GetKYCProfile returns the current driver's KYC profile and step progress.
 func GetKYCProfile(c *gin.Context) {
 	userID, exists := c.Get("user_id")
@@ -1590,7 +1710,7 @@ func InitDB() {
 	}
 
 	// Migrate the schema
-	if err = DB.AutoMigrate(&User{}, &VerificationCode{}, &Country{}, &State{}, &Gender{}, &DriverProfile{}, &VehicleType{}, &Category{}, &LoadType{}); err != nil {
+	if err = DB.AutoMigrate(&User{}, &VerificationCode{}, &Country{}, &State{}, &Gender{}, &DriverProfile{}, &VehicleType{}, &Category{}, &LoadType{}, &DriverLoadType{}); err != nil {
 		log.Fatal("Failed to migrate schema:", err)
 	}
 
