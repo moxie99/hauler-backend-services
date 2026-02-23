@@ -206,9 +206,10 @@ type PaginationResponse struct {
 
 // ReviewDocumentRequest represents a request to review a KYC document
 type ReviewDocumentRequest struct {
-	DocumentType     string                     `json:"document_type" binding:"required,oneof=selfie license_front license_back vehicle_photo vehicle_registration"`
+	DocumentType     string                     `json:"document_type" binding:"required,oneof=selfie license_front license_back vehicle_photo vehicle_registration insurance_document roadworthiness_document"`
 	Status           DocumentVerificationStatus `json:"status" binding:"required,oneof=approved rejected"`
 	RejectionReason  string                     `json:"rejection_reason" binding:"required_if=Status rejected"`
+	ExpiryDate       string                     `json:"expiry_date,omitempty"` // Optional: Required when approving documents with expiry (license, vehicle_registration, insurance, roadworthiness)
 }
 
 // Category represents a vehicle category in the system
@@ -449,10 +450,12 @@ type DriverProfile struct {
 	LicenseFrontURL              string                     `json:"license_front_url"`
 	LicenseFrontStatus           DocumentVerificationStatus `json:"license_front_status" gorm:"type:varchar(20);default:'pending'"`
 	LicenseFrontRejectionReason  string                     `json:"license_front_rejection_reason,omitempty"`
+	LicenseFrontExpiryDate       *time.Time                 `json:"license_front_expiry_date,omitempty"`
 	
 	LicenseBackURL               string                     `json:"license_back_url"`
 	LicenseBackStatus            DocumentVerificationStatus `json:"license_back_status" gorm:"type:varchar(20);default:'pending'"`
 	LicenseBackRejectionReason   string                     `json:"license_back_rejection_reason,omitempty"`
+	LicenseBackExpiryDate        *time.Time                 `json:"license_back_expiry_date,omitempty"`
 	
 	VehiclePhotoURL              string                     `json:"vehicle_photo_url"`
 	VehiclePhotoStatus           DocumentVerificationStatus `json:"vehicle_photo_status" gorm:"type:varchar(20);default:'pending'"`
@@ -461,6 +464,7 @@ type DriverProfile struct {
 	VehicleRegistrationURL       string                     `json:"vehicle_registration_url"`
 	VehicleRegistrationStatus    DocumentVerificationStatus `json:"vehicle_registration_status" gorm:"type:varchar(20);default:'pending'"`
 	VehicleRegistrationRejectionReason string                `json:"vehicle_registration_rejection_reason,omitempty"`
+	VehicleRegistrationExpiryDate *time.Time                `json:"vehicle_registration_expiry_date,omitempty"`
 	
 	Step3Status                  KYCStepStatus              `json:"step3_status" gorm:"type:varchar(20);default:'not_started'"`
 
@@ -470,6 +474,22 @@ type DriverProfile struct {
 	WorkStartTime                string    `json:"work_start_time"` // Format: "09:00"
 	WorkEndTime                  string    `json:"work_end_time"`   // Format: "17:00"
 	Step4Status                  KYCStepStatus `json:"step4_status" gorm:"type:varchar(20);default:'not_started'"`
+
+	// Step 5: Vehicle Details & Documents
+	PlateNumber                  string                     `json:"plate_number" gorm:"uniqueIndex"`
+	VehicleBrand                 string                     `json:"vehicle_brand"`
+	VehicleModel                 string                     `json:"vehicle_model"`
+	VehicleYear                  string                     `json:"vehicle_year"`
+	VehicleColor                 string                     `json:"vehicle_color"`
+	InsuranceDocumentURL         string                     `json:"insurance_document_url"`
+	InsuranceDocumentStatus      DocumentVerificationStatus `json:"insurance_document_status" gorm:"type:varchar(20);default:'pending'"`
+	InsuranceDocumentRejectionReason string                 `json:"insurance_document_rejection_reason,omitempty"`
+	InsuranceDocumentExpiryDate  *time.Time                 `json:"insurance_document_expiry_date,omitempty"`
+	RoadworthinessDocumentURL    string                     `json:"roadworthiness_document_url"`
+	RoadworthinessDocumentStatus DocumentVerificationStatus `json:"roadworthiness_document_status" gorm:"type:varchar(20);default:'pending'"`
+	RoadworthinessDocumentRejectionReason string            `json:"roadworthiness_document_rejection_reason,omitempty"`
+	RoadworthinessDocumentExpiryDate *time.Time             `json:"roadworthiness_document_expiry_date,omitempty"`
+	Step5Status                  KYCStepStatus              `json:"step5_status" gorm:"type:varchar(20);default:'not_started'"`
 
 	// Admin review tracking
 	ReviewedBy   *uint      `json:"reviewed_by,omitempty"` // Admin user ID who last reviewed

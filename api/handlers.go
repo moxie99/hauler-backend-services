@@ -1290,6 +1290,9 @@ func SubmitKYCStep1(c *gin.Context) {
 	// Preload relationships for the response
 	DB.Preload("Country").Preload("State").Preload("Gender").First(&profile, profile.ID)
 
+	// Convert S3 keys to pre-signed URLs (valid for 60 minutes)
+	ConvertProfileURLsToPresigned(&profile, 60)
+
 	ResponseJSON(c, http.StatusOK, "KYC Step 1 completed successfully", gin.H{
 		"profile":      profile,
 		"current_step": profile.CurrentStep,
@@ -1366,6 +1369,9 @@ func SubmitKYCStep2(c *gin.Context) {
 	}
 
 	DB.Preload("Country").Preload("State").Preload("Gender").First(&profile, profile.ID)
+
+	// Convert S3 keys to pre-signed URLs (valid for 60 minutes)
+	ConvertProfileURLsToPresigned(&profile, 60)
 
 	ResponseJSON(c, http.StatusOK, "KYC Step 2 completed successfully", gin.H{
 		"profile":      profile,
@@ -1498,6 +1504,9 @@ func SubmitKYCStep3(c *gin.Context) {
 
 	DB.Preload("Country").Preload("State").Preload("Gender").First(&profile, profile.ID)
 
+	// Convert S3 keys to pre-signed URLs (valid for 60 minutes)
+	ConvertProfileURLsToPresigned(&profile, 60)
+
 	ResponseJSON(c, http.StatusOK, "KYC Step 3 completed successfully", gin.H{
 		"profile":      profile,
 		"current_step": profile.CurrentStep,
@@ -1603,6 +1612,9 @@ func SubmitKYCStep4(c *gin.Context) {
 	// Reload profile with relationships
 	DB.Preload("Country").Preload("State").Preload("Gender").Preload("VehicleType.Category").First(&profile, profile.ID)
 
+	// Convert S3 keys to pre-signed URLs (valid for 60 minutes)
+	ConvertProfileURLsToPresigned(&profile, 60)
+
 	// Get load types
 	var loadTypes []LoadType
 	if len(req.LoadTypeIDs) > 0 {
@@ -1621,6 +1633,147 @@ func SubmitKYCStep4(c *gin.Context) {
 		"total_steps":  5,
 		"load_types":   loadTypes,
 		"days_of_work": daysOfWork,
+	})
+}
+
+// SubmitKYCStep5 handles submission of KYC step 5 (Vehicle Details & Documents).
+// It accepts vehicle details and two documents via form-data: insurance_document and roadworthiness_document.
+func SubmitKYCStep5(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		ResponseJSON(c, http.StatusUnauthorized, "User not authenticated", nil)
+		return
+	}
+
+	// Verify user is a driver
+	role, _ := c.Get("role")
+	if UserRole(role.(string)) != RoleDriver {
+		ResponseJSON(c, http.StatusForbidden, "Only drivers can submit KYC", nil)
+		return
+	}
+
+	// Parse form data
+	plateNumber := c.PostForm("plate_number")
+	brand := c.PostForm("brand")
+	model := c.PostForm("model")
+	year := c.PostForm("year")
+	color := c.PostForm("color")
+
+	// Validate required fields
+	if plateNumber == "" {
+		ResponseJSON(c, http.StatusBadRequest, "Plate number is required", nil)
+		return
+	}
+	if brand == "" {
+		ResponseJSON(c, http.StatusBadRequest, "Vehicle brand is required", nil)
+		return
+	}
+	if model == "" {
+		ResponseJSON(c, http.StatusBadRequest, "Vehicle model is required", nil)
+		return
+	}
+	if year == "" {
+		ResponseJSON(c, http.StatusBadRequest, "Vehicle year is required", nil)
+		return
+	}
+	if color == "" {
+		ResponseJSON(c, http.StatusBadRequest, "Vehicle color is required", nil)
+		return
+	}
+
+	// Get driver profile
+	var profile DriverProfile
+	if err := DB.Where("user_id = ?", userID).First(&profile).Error; err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Please complete previous KYC steps first", nil)
+		return
+	}
+
+	// Check if plate number already exists (for other drivers)
+	var existingProfile DriverProfile
+	if err := DB.Where("plate_number = ? AND user_id != ?", plateNumber, userID).First(&existingProfile).Error; err == nil {
+		ResponseJSON(c, http.StatusConflict, "This plate number is already registered", nil)
+		return
+	}
+
+	// Handle insurance document upload
+	insuranceFile, err := c.FormFile("insurance_document")
+	if err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Insurance document is required", nil)
+		return
+	}
+
+	// Validate insurance document
+	if err := ValidateImageFile(insuranceFile, 10); err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "insurance_document: "+err.Error(), nil)
+		return
+	}
+
+	// Upload insurance document to S3
+	insuranceURL, err := UploadFileToS3(insuranceFile, "kyc/insurance")
+	if err != nil {
+		log.Printf("Failed to upload insurance document to S3: %v", err)
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to upload insurance document", nil)
+		return
+	}
+
+	// Handle roadworthiness document upload
+	roadworthinessFile, err := c.FormFile("roadworthiness_document")
+	if err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Roadworthiness document is required", nil)
+		return
+	}
+
+	// Validate roadworthiness document
+	if err := ValidateImageFile(roadworthinessFile, 10); err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "roadworthiness_document: "+err.Error(), nil)
+		return
+	}
+
+	// Upload roadworthiness document to S3
+	roadworthinessURL, err := UploadFileToS3(roadworthinessFile, "kyc/roadworthiness")
+	if err != nil {
+		log.Printf("Failed to upload roadworthiness document to S3: %v", err)
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to upload roadworthiness document", nil)
+		return
+	}
+
+	// Update profile with Step 5 data
+	profile.PlateNumber = plateNumber
+	profile.VehicleBrand = brand
+	profile.VehicleModel = model
+	profile.VehicleYear = year
+	profile.VehicleColor = color
+	profile.InsuranceDocumentURL = insuranceURL
+	profile.InsuranceDocumentStatus = DocStatusPending
+	profile.RoadworthinessDocumentURL = roadworthinessURL
+	profile.RoadworthinessDocumentStatus = DocStatusPending
+	profile.Step5Status = StepStatusPending // Pending admin review
+	if profile.CurrentStep < 5 {
+		profile.CurrentStep = 5
+	}
+
+	// Update user KYC status to in_progress (awaiting final review)
+	var user User
+	if err := DB.First(&user, userID).Error; err == nil {
+		user.KYCStatus = KYCStatusInProgress
+		DB.Save(&user)
+	}
+
+	if err := DB.Save(&profile).Error; err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to update KYC profile", nil)
+		return
+	}
+
+	// Reload profile with relationships
+	DB.Preload("Country").Preload("State").Preload("Gender").Preload("VehicleType.Category").First(&profile, profile.ID)
+
+	// Convert S3 keys to pre-signed URLs (valid for 60 minutes)
+	ConvertProfileURLsToPresigned(&profile, 60)
+
+	ResponseJSON(c, http.StatusOK, "KYC Step 5 completed successfully. Your documents are under review.", gin.H{
+		"profile":      profile,
+		"current_step": profile.CurrentStep,
+		"total_steps":  5,
 	})
 }
 
@@ -1649,6 +1802,9 @@ func GetKYCProfile(c *gin.Context) {
 		})
 		return
 	}
+
+	// Convert S3 keys to pre-signed URLs (valid for 60 minutes)
+	ConvertProfileURLsToPresigned(&profile, 60)
 
 	ResponseJSON(c, http.StatusOK, "KYC profile retrieved successfully", gin.H{
 		"profile":      profile,
@@ -2465,6 +2621,8 @@ func GetDriverDetails(c *gin.Context) {
 	}
 
 	if err == nil {
+		// Convert S3 keys to pre-signed URLs (valid for 60 minutes)
+		ConvertProfileURLsToPresigned(&profile, 60)
 		response["kyc_profile"] = profile
 	}
 
@@ -2529,6 +2687,17 @@ func ReviewDocument(c *gin.Context) {
 		return
 	}
 
+	// Parse expiry date if provided
+	var expiryDate *time.Time
+	if req.ExpiryDate != "" {
+		parsedDate, err := time.Parse("2006-01-02", req.ExpiryDate)
+		if err != nil {
+			ResponseJSON(c, http.StatusBadRequest, "Invalid expiry date format. Use YYYY-MM-DD", nil)
+			return
+		}
+		expiryDate = &parsedDate
+	}
+
 	// Update document status based on document type
 	now := time.Now()
 	adminID := userID.(uint)
@@ -2549,6 +2718,10 @@ func ReviewDocument(c *gin.Context) {
 			profile.LicenseFrontRejectionReason = req.RejectionReason
 		} else {
 			profile.LicenseFrontRejectionReason = ""
+			// Save expiry date when approving
+			if expiryDate != nil {
+				profile.LicenseFrontExpiryDate = expiryDate
+			}
 		}
 		updateStep3Status(&profile)
 	case "license_back":
@@ -2557,6 +2730,10 @@ func ReviewDocument(c *gin.Context) {
 			profile.LicenseBackRejectionReason = req.RejectionReason
 		} else {
 			profile.LicenseBackRejectionReason = ""
+			// Save expiry date when approving
+			if expiryDate != nil {
+				profile.LicenseBackExpiryDate = expiryDate
+			}
 		}
 		updateStep3Status(&profile)
 	case "vehicle_photo":
@@ -2573,8 +2750,36 @@ func ReviewDocument(c *gin.Context) {
 			profile.VehicleRegistrationRejectionReason = req.RejectionReason
 		} else {
 			profile.VehicleRegistrationRejectionReason = ""
+			// Save expiry date when approving
+			if expiryDate != nil {
+				profile.VehicleRegistrationExpiryDate = expiryDate
+			}
 		}
 		updateStep3Status(&profile)
+	case "insurance_document":
+		profile.InsuranceDocumentStatus = req.Status
+		if req.Status == DocStatusRejected {
+			profile.InsuranceDocumentRejectionReason = req.RejectionReason
+		} else {
+			profile.InsuranceDocumentRejectionReason = ""
+			// Save expiry date when approving
+			if expiryDate != nil {
+				profile.InsuranceDocumentExpiryDate = expiryDate
+			}
+		}
+		updateStep5Status(&profile)
+	case "roadworthiness_document":
+		profile.RoadworthinessDocumentStatus = req.Status
+		if req.Status == DocStatusRejected {
+			profile.RoadworthinessDocumentRejectionReason = req.RejectionReason
+		} else {
+			profile.RoadworthinessDocumentRejectionReason = ""
+			// Save expiry date when approving
+			if expiryDate != nil {
+				profile.RoadworthinessDocumentExpiryDate = expiryDate
+			}
+		}
+		updateStep5Status(&profile)
 	default:
 		ResponseJSON(c, http.StatusBadRequest, "Invalid document type", nil)
 		return
@@ -2590,6 +2795,9 @@ func ReviewDocument(c *gin.Context) {
 
 	// Update user KYC status based on overall profile status
 	updateUserKYCStatus(&driver, &profile)
+
+	// Convert S3 keys to pre-signed URLs (valid for 60 minutes)
+	ConvertProfileURLsToPresigned(&profile, 60)
 
 	ResponseJSON(c, http.StatusOK, "Document reviewed successfully", gin.H{
 		"driver":      driver,
@@ -2618,16 +2826,36 @@ func updateStep3Status(profile *DriverProfile) {
 	}
 }
 
+// updateStep5Status updates Step 5 status based on all Step 5 documents
+func updateStep5Status(profile *DriverProfile) {
+	allApproved := profile.InsuranceDocumentStatus == DocStatusApproved &&
+		profile.RoadworthinessDocumentStatus == DocStatusApproved
+
+	anyRejected := profile.InsuranceDocumentStatus == DocStatusRejected ||
+		profile.RoadworthinessDocumentStatus == DocStatusRejected
+
+	if allApproved {
+		profile.Step5Status = StepStatusApproved
+	} else if anyRejected {
+		profile.Step5Status = StepStatusRejected
+	} else {
+		profile.Step5Status = StepStatusPending
+	}
+}
+
 // updateUserKYCStatus updates the user's overall KYC status based on profile
 func updateUserKYCStatus(user *User, profile *DriverProfile) {
 	// If all steps are approved, set KYC to approved
 	if profile.Step1Status == StepStatusApproved &&
 		profile.Step2Status == StepStatusApproved &&
-		profile.Step3Status == StepStatusApproved {
+		profile.Step3Status == StepStatusApproved &&
+		profile.Step4Status == StepStatusApproved &&
+		profile.Step5Status == StepStatusApproved {
 		user.KYCStatus = KYCStatusApproved
 	} else if profile.Step1Status == StepStatusRejected ||
 		profile.Step2Status == StepStatusRejected ||
-		profile.Step3Status == StepStatusRejected {
+		profile.Step3Status == StepStatusRejected ||
+		profile.Step5Status == StepStatusRejected {
 		user.KYCStatus = KYCStatusRejected
 	} else if profile.CurrentStep > 0 {
 		user.KYCStatus = KYCStatusInProgress

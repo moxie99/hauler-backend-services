@@ -72,6 +72,7 @@ func main() {
 		protected.POST("/driver/kyc/step/2", api.SubmitKYCStep2)
 		protected.POST("/driver/kyc/step/3", api.SubmitKYCStep3)
 		protected.POST("/driver/kyc/step/4", api.SubmitKYCStep4)
+		protected.POST("/driver/kyc/step/5", api.SubmitKYCStep5)
 		// Token refresh
 		protected.POST("/auth/refresh-token", api.RefreshToken)
 		// Change password
