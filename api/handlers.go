@@ -3463,3 +3463,173 @@ func DeleteLoadType(c *gin.Context) {
 
 	ResponseJSON(c, http.StatusOK, "Load type deleted successfully", nil)
 }
+
+// HealthCheck provides a simple health check endpoint
+func HealthCheck(c *gin.Context) {
+	ResponseJSON(c, http.StatusOK, "Service is healthy", gin.H{
+		"status": "ok",
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+// HealthCheckDetailed provides detailed health information about the service
+func HealthCheckDetailed(c *gin.Context) {
+	startTime := time.Now()
+	
+	health := gin.H{
+		"status": "ok",
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+		"service": "hauler-backend-services",
+		"version": "1.0.0",
+		"checks": gin.H{},
+	}
+
+	checks := health["checks"].(gin.H)
+	overallHealthy := true
+
+	// Check Database Connection
+	dbStatus := "ok"
+	dbMessage := "Database connection is healthy"
+	dbStartTime := time.Now()
+	
+	if DB != nil {
+		sqlDB, err := DB.DB()
+		if err != nil {
+			dbStatus = "error"
+			dbMessage = fmt.Sprintf("Failed to get database instance: %v", err)
+			overallHealthy = false
+		} else {
+			err = sqlDB.Ping()
+			if err != nil {
+				dbStatus = "error"
+				dbMessage = fmt.Sprintf("Database ping failed: %v", err)
+				overallHealthy = false
+			}
+		}
+	} else {
+		dbStatus = "error"
+		dbMessage = "Database not initialized"
+		overallHealthy = false
+	}
+	
+	checks["database"] = gin.H{
+		"status": dbStatus,
+		"message": dbMessage,
+		"response_time_ms": time.Since(dbStartTime).Milliseconds(),
+	}
+
+	// Check S3 Connection
+	s3Status := "ok"
+	s3Message := "S3 client is initialized"
+	
+	if s3Client == nil {
+		s3Status = "warning"
+		s3Message = "S3 client not initialized - file uploads will fail"
+	}
+	
+	checks["s3"] = gin.H{
+		"status": s3Status,
+		"message": s3Message,
+		"bucket": s3Bucket,
+		"region": s3Region,
+	}
+
+	// Check Environment Variables
+	envStatus := "ok"
+	envMessage := "All required environment variables are set"
+	missingEnvVars := []string{}
+	
+	requiredEnvVars := []string{
+		"DATABASE_URL",
+		"JWT_SECRET",
+		"AWS_ACCESS_KEY_ID",
+		"AWS_SECRET_ACCESS_KEY",
+		"AWS_REGION",
+		"AWS_S3_BUCKET",
+	}
+	
+	for _, envVar := range requiredEnvVars {
+		if os.Getenv(envVar) == "" {
+			missingEnvVars = append(missingEnvVars, envVar)
+		}
+	}
+	
+	if len(missingEnvVars) > 0 {
+		envStatus = "warning"
+		envMessage = fmt.Sprintf("Missing environment variables: %v", missingEnvVars)
+	}
+	
+	checks["environment"] = gin.H{
+		"status": envStatus,
+		"message": envMessage,
+	}
+
+	// Overall status
+	if !overallHealthy {
+		health["status"] = "unhealthy"
+	}
+	
+	health["response_time_ms"] = time.Since(startTime).Milliseconds()
+
+	statusCode := http.StatusOK
+	if !overallHealthy {
+		statusCode = http.StatusServiceUnavailable
+	}
+
+	ResponseJSON(c, statusCode, "Health check completed", health)
+}
+
+// ReadinessCheck checks if the service is ready to accept traffic
+func ReadinessCheck(c *gin.Context) {
+	ready := true
+	checks := gin.H{}
+
+	// Check Database
+	if DB != nil {
+		sqlDB, err := DB.DB()
+		if err == nil {
+			err = sqlDB.Ping()
+			if err != nil {
+				ready = false
+				checks["database"] = "not ready"
+			} else {
+				checks["database"] = "ready"
+			}
+		} else {
+			ready = false
+			checks["database"] = "not ready"
+		}
+	} else {
+		ready = false
+		checks["database"] = "not initialized"
+	}
+
+	// Check S3
+	if s3Client == nil {
+		checks["s3"] = "not initialized (warning only)"
+		// Don't mark as not ready for S3, it's not critical for basic operations
+	} else {
+		checks["s3"] = "ready"
+	}
+
+	response := gin.H{
+		"ready": ready,
+		"checks": checks,
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+	}
+
+	statusCode := http.StatusOK
+	if !ready {
+		statusCode = http.StatusServiceUnavailable
+	}
+
+	ResponseJSON(c, statusCode, "Readiness check completed", response)
+}
+
+// LivenessCheck checks if the service is alive (for Kubernetes liveness probe)
+func LivenessCheck(c *gin.Context) {
+	ResponseJSON(c, http.StatusOK, "Service is alive", gin.H{
+		"alive": true,
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+	})
+}

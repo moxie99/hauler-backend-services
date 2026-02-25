@@ -119,6 +119,12 @@ func main() {
 		admin.DELETE("/load-types/:id", api.DeleteLoadType)
 	}
 
+	// Health check routes (public - no authentication required)
+	r.GET("/health", api.HealthCheck)
+	r.GET("/health/detailed", api.HealthCheckDetailed)
+	r.GET("/health/ready", api.ReadinessCheck)
+	r.GET("/health/live", api.LivenessCheck)
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
