@@ -469,7 +469,7 @@ type DriverProfile struct {
 	Step3Status                  KYCStepStatus              `json:"step3_status" gorm:"type:varchar(20);default:'not_started'"`
 
 	// Step 4: Work Preferences
-	DaysOfWork                   string    `json:"days_of_work" gorm:"type:jsonb"` // JSON array: ["Monday", "Tuesday", ...]
+	DaysOfWork                   string    `json:"days_of_work" gorm:"type:jsonb;default:'[]'"` // JSON array: ["Monday", "Tuesday", ...]
 	VehicleTypeID                *uint     `json:"vehicle_type_id"` // Single vehicle type
 	WorkStartTime                string    `json:"work_start_time"` // Format: "09:00"
 	WorkEndTime                  string    `json:"work_end_time"`   // Format: "17:00"

@@ -1245,7 +1245,10 @@ func SubmitKYCStep1(c *gin.Context) {
 	var profile DriverProfile
 	isNew := false
 	if err := DB.Where("user_id = ?", userID).First(&profile).Error; err != nil {
-		profile = DriverProfile{UserID: userID.(uint)}
+		profile = DriverProfile{
+			UserID:     userID.(uint),
+			DaysOfWork: "[]", // Initialize as empty JSON array instead of empty string
+		}
 		isNew = true
 	}
 
@@ -1845,6 +1848,40 @@ var DB *gorm.DB
 // InitDB initializes the database connection using environment variables.
 // It loads the database configuration from a .env file and migrates the User schema.
 
+// migrateExpiryDateColumns manually adds expiry date columns if they don't exist
+// This is a fallback in case AutoMigrate doesn't add them
+func migrateExpiryDateColumns() {
+	// Check if columns exist and add them if they don't
+	columns := []string{
+		"license_front_expiry_date",
+		"license_back_expiry_date",
+		"vehicle_registration_expiry_date",
+		"insurance_document_expiry_date",
+		"roadworthiness_document_expiry_date",
+	}
+
+	for _, column := range columns {
+		// Check if column exists
+		var count int64
+		DB.Raw(`
+			SELECT COUNT(*) 
+			FROM information_schema.columns 
+			WHERE table_name = 'driver_profiles' 
+			AND column_name = ?
+		`, column).Scan(&count)
+
+		// Add column if it doesn't exist
+		if count == 0 {
+			sql := fmt.Sprintf("ALTER TABLE driver_profiles ADD COLUMN %s TIMESTAMP WITH TIME ZONE", column)
+			if err := DB.Exec(sql).Error; err != nil {
+				log.Printf("Warning: Failed to add column %s: %v", column, err)
+			} else {
+				log.Printf("Successfully added column: %s", column)
+			}
+		}
+	}
+}
+
 func InitDB() {
 	// Load .env ONLY in local development
 	if os.Getenv("RENDER") == "" {
@@ -1869,6 +1906,9 @@ func InitDB() {
 	if err = DB.AutoMigrate(&User{}, &VerificationCode{}, &Country{}, &State{}, &Gender{}, &DriverProfile{}, &VehicleType{}, &Category{}, &LoadType{}, &DriverLoadType{}); err != nil {
 		log.Fatal("Failed to migrate schema:", err)
 	}
+
+	// Manual migration for expiry date columns (in case AutoMigrate didn't add them)
+	migrateExpiryDateColumns()
 
 	// Create default super admins if they don't exist
 	createDefaultSuperAdmins()
