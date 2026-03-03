@@ -24,36 +24,43 @@ var s3Region string
 // InitS3 initializes the AWS S3 client using environment variables.
 // Required env vars: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, AWS_S3_BUCKET
 func InitS3() {
+	log.Println("Initializing S3 client...")
+	
 	s3Bucket = os.Getenv("AWS_S3_BUCKET")
 	if s3Bucket == "" {
-		log.Println("Warning: AWS_S3_BUCKET not set, file uploads will fail")
+		log.Println("ERROR: AWS_S3_BUCKET not set, file uploads will fail")
 		return
 	}
+	log.Printf("S3 Bucket: %s", s3Bucket)
 
 	s3Region = os.Getenv("AWS_REGION")
 	if s3Region == "" {
 		s3Region = "us-east-1"
 	}
+	log.Printf("S3 Region: %s", s3Region)
 
 	accessKey := os.Getenv("AWS_ACCESS_KEY_ID")
 	secretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
 
 	if accessKey == "" || secretKey == "" {
-		log.Println("Warning: AWS credentials not set, file uploads will fail")
+		log.Println("ERROR: AWS credentials not set, file uploads will fail")
+		log.Printf("AWS_ACCESS_KEY_ID present: %v", accessKey != "")
+		log.Printf("AWS_SECRET_ACCESS_KEY present: %v", secretKey != "")
 		return
 	}
+	log.Println("AWS credentials found")
 
 	cfg, err := config.LoadDefaultConfig(context.TODO(),
 		config.WithRegion(s3Region),
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")),
 	)
 	if err != nil {
-		log.Printf("Warning: Failed to load AWS config: %v", err)
+		log.Printf("ERROR: Failed to load AWS config: %v", err)
 		return
 	}
 
 	s3Client = s3.NewFromConfig(cfg)
-	log.Println("AWS S3 client initialized successfully")
+	log.Println("✅ AWS S3 client initialized successfully")
 }
 
 // UploadFileToS3 uploads a file to S3 and returns the public URL.
