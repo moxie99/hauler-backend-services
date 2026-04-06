@@ -9,6 +9,10 @@ ADD COLUMN IF NOT EXISTS vehicle_registration_expiry_date TIMESTAMP WITH TIME ZO
 ADD COLUMN IF NOT EXISTS insurance_document_expiry_date TIMESTAMP WITH TIME ZONE,
 ADD COLUMN IF NOT EXISTS roadworthiness_document_expiry_date TIMESTAMP WITH TIME ZONE;
 
+-- Add email_verified column to users table
+ALTER TABLE users 
+ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT FALSE;
+
 -- Verify the columns were added
 SELECT column_name, data_type, is_nullable
 FROM information_schema.columns

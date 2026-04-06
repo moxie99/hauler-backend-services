@@ -36,6 +36,8 @@ func main() {
 	r.POST("/api/auth/register", api.Register)
 	r.POST("/api/auth/login", api.Login)
 	r.POST("/api/auth/verify-login-otp", api.VerifyLoginOTP)
+	r.POST("/api/auth/verify-email", api.VerifyEmail)
+	r.POST("/api/auth/resend-verification-code", api.ResendVerificationCode)
 
 	// Driver registration and verification
 	r.POST("/api/driver/register", api.DriverRegister)

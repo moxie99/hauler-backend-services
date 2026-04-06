@@ -38,6 +38,42 @@ func Register(c *gin.Context) {
 	// Check if email already exists
 	var existingUserByEmail User
 	if err := DB.Where("email = ?", req.Email).First(&existingUserByEmail).Error; err == nil {
+		if existingUserByEmail.Role == RoleCustomer && !existingUserByEmail.EmailVerified {
+			code := GenerateVerificationCode()
+			expiresAt := time.Now().Add(15 * time.Minute)
+
+			DB.Model(&VerificationCode{}).
+				Where("email = ? AND used = ? AND purpose = ?", req.Email, false, PurposeEmailVerification).
+				Update("used", true)
+
+			verificationCode := VerificationCode{
+				Email:     req.Email,
+				Code:      code,
+				Purpose:   PurposeEmailVerification,
+				ExpiresAt: expiresAt,
+				Used:      false,
+			}
+
+			if err := DB.Create(&verificationCode).Error; err != nil {
+				log.Printf("Failed to create verification code: %v", err)
+				ResponseJSON(c, http.StatusInternalServerError, "Failed to generate verification code", nil)
+				return
+			}
+
+			emailService := NewEmailService()
+			if err := emailService.SendVerificationCode(req.Email, code); err != nil {
+				log.Printf("Failed to send verification email: %v", err)
+				ResponseJSON(c, http.StatusInternalServerError, "Failed to send verification code", nil)
+				return
+			}
+
+			ResponseJSON(c, http.StatusConflict, "Email already registered but not verified. A verification code has been sent to your email.", gin.H{
+				"requires_verification": true,
+				"email":                 req.Email,
+			})
+			return
+		}
+
 		ResponseJSON(c, http.StatusConflict, "Email already registered", nil)
 		return
 	}
@@ -57,13 +93,14 @@ func Register(c *gin.Context) {
 
 	// Create new user
 	user := User{
-		Email:     req.Email,
-		Password:  req.Password, // Will be hashed by BeforeCreate hook
-		FirstName: req.FirstName,
-		LastName:  req.LastName,
-		Phone:     req.Phone,
-		Role:      req.Role,
-		IsActive:  true,
+		Email:         req.Email,
+		Password:      req.Password, // Will be hashed by BeforeCreate hook
+		FirstName:     req.FirstName,
+		LastName:      req.LastName,
+		Phone:         req.Phone,
+		Role:          req.Role,
+		IsActive:      true,
+		EmailVerified: false,
 	}
 
 	if err := DB.Create(&user).Error; err != nil {
@@ -71,9 +108,37 @@ func Register(c *gin.Context) {
 		return
 	}
 
-	// Don't return password in response
-	user.Password = ""
-	ResponseJSON(c, http.StatusCreated, "User registered successfully", user)
+	// Generate verification code
+	code := GenerateVerificationCode()
+
+	// Invalidate any existing email verification codes for this email
+	DB.Model(&VerificationCode{}).Where("email = ? AND used = ? AND purpose = ?", req.Email, false, PurposeEmailVerification).Update("used", true)
+
+	// Create verification code record
+	verificationCode := VerificationCode{
+		Email:     req.Email,
+		Code:      code,
+		Purpose:   PurposeEmailVerification,
+		ExpiresAt: time.Now().Add(15 * time.Minute),
+	}
+
+	if err := DB.Create(&verificationCode).Error; err != nil {
+		log.Printf("Failed to create verification code: %v", err)
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to generate verification code", nil)
+		return
+	}
+
+	// Send verification code via email
+	emailService := NewEmailService()
+	if err := emailService.SendVerificationCode(req.Email, code); err != nil {
+		log.Printf("Failed to send verification email: %v", err)
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to send verification code", nil)
+		return
+	}
+
+	ResponseJSON(c, http.StatusCreated, "User registered successfully. Please check your email for verification code.", gin.H{
+		"message": "Verification code sent to your email",
+	})
 }
 
 // Login handles user authentication.
@@ -144,6 +209,41 @@ func Login(c *gin.Context) {
 		ResponseJSON(c, http.StatusOK, "Login verification code sent to your email", gin.H{
 			"requires_otp": true,
 			"email":        user.Email,
+		})
+		return
+	}
+
+	// For customers: Check if email is verified
+	if user.Role == RoleCustomer && !user.EmailVerified {
+		// Customer hasn't verified email - send verification code and return message
+		code := GenerateVerificationCode()
+		expiresAt := time.Now().Add(15 * time.Minute)
+
+		// Invalidate any existing unused email verification codes
+		DB.Model(&VerificationCode{}).Where("email = ? AND used = ? AND purpose = ?", user.Email, false, PurposeEmailVerification).Update("used", true)
+
+		// Create new verification code
+		verificationCode := VerificationCode{
+			Email:     user.Email,
+			Code:      code,
+			Purpose:   PurposeEmailVerification,
+			ExpiresAt: expiresAt,
+			Used:      false,
+		}
+
+		if err := DB.Create(&verificationCode).Error; err != nil {
+			log.Printf("Failed to create verification code: %v", err)
+		} else {
+			// Send verification code via email
+			emailService := NewEmailService()
+			if err := emailService.SendVerificationCode(user.Email, code); err != nil {
+				log.Printf("Failed to send verification email: %v", err)
+			}
+		}
+
+		ResponseJSON(c, http.StatusForbidden, "Please verify your email address. A verification code has been sent to your email", gin.H{
+			"requires_verification": true,
+			"email":                 user.Email,
 		})
 		return
 	}
@@ -381,6 +481,7 @@ func VerifyEmail(c *gin.Context) {
 
 	// Activate the user account
 	user.IsActive = true
+	user.EmailVerified = true
 
 	// For drivers, set KYC status to pending after email verification
 	if user.Role == RoleDriver {
@@ -569,12 +670,12 @@ func ResetPassword(c *gin.Context) {
 	}
 
 	user.Password = string(hashedPassword)
-	
+
 	// If this is an admin who must change password, clear the flag
 	if user.Role == RoleAdmin && user.MustChangePassword {
 		user.MustChangePassword = false
 	}
-	
+
 	if err := DB.Save(&user).Error; err != nil {
 		ResponseJSON(c, http.StatusInternalServerError, "Failed to update password", nil)
 		return
@@ -641,6 +742,64 @@ func ResendDriverVerificationCode(c *gin.Context) {
 	}
 
 	// Send verification code via email
+	emailService := NewEmailService()
+	if err := emailService.SendVerificationCode(req.Email, code); err != nil {
+		log.Printf("Failed to send verification email: %v", err)
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to send verification email", nil)
+		return
+	}
+
+	ResponseJSON(c, http.StatusOK, "Verification code has been resent to your email", nil)
+}
+
+// ResendVerificationCode resends the email verification code for customer registration.
+func ResendVerificationCode(c *gin.Context) {
+	var req ResendCodeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Invalid request payload: "+err.Error(), nil)
+		return
+	}
+
+	var user User
+	if err := DB.Where("email = ?", req.Email).First(&user).Error; err != nil {
+		ResponseJSON(c, http.StatusNotFound, "Email does not exist", nil)
+		return
+	}
+
+	if !user.IsActive {
+		ResponseJSON(c, http.StatusForbidden, "Account is deactivated", nil)
+		return
+	}
+
+	if user.Role != RoleCustomer {
+		ResponseJSON(c, http.StatusBadRequest, "This endpoint is only for customer verification", nil)
+		return
+	}
+
+	if user.EmailVerified {
+		ResponseJSON(c, http.StatusBadRequest, "Email is already verified", nil)
+		return
+	}
+
+	code := GenerateVerificationCode()
+	expiresAt := time.Now().Add(15 * time.Minute)
+
+	DB.Model(&VerificationCode{}).Where("email = ? AND used = ? AND purpose = ?", req.Email, false, PurposeEmailVerification).Update("used", true)
+
+	verificationCode := VerificationCode{
+		Email:     req.Email,
+		Code:      code,
+		Purpose:   PurposeEmailVerification,
+		ExpiresAt: expiresAt,
+		Used:      false,
+	}
+
+	if err := DB.Create(&verificationCode).Error; err != nil {
+		log.Printf("Failed to create verification code: %v", err)
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to generate verification code", nil)
+		return
+	}
+
 	emailService := NewEmailService()
 	if err := emailService.SendVerificationCode(req.Email, code); err != nil {
 		log.Printf("Failed to send verification email: %v", err)
@@ -2341,17 +2500,17 @@ func GetAllDrivers(c *gin.Context) {
 
 	// Define response structure
 	type DriverWithKYC struct {
-		ID                 uint       `json:"id"`
-		Email              string     `json:"email"`
-		FirstName          string     `json:"first_name"`
-		LastName           string     `json:"last_name"`
-		Phone              string     `json:"phone"`
-		Role               UserRole   `json:"role"`
-		IsActive           bool       `json:"is_active"`
-		KYCStatus          KYCStatus  `json:"kyc_status"`
-		CreatedAt          time.Time  `json:"created_at"`
-		UpdatedAt          time.Time  `json:"updated_at"`
-		KYCProfile         *DriverProfile `json:"kyc_profile,omitempty"`
+		ID         uint           `json:"id"`
+		Email      string         `json:"email"`
+		FirstName  string         `json:"first_name"`
+		LastName   string         `json:"last_name"`
+		Phone      string         `json:"phone"`
+		Role       UserRole       `json:"role"`
+		IsActive   bool           `json:"is_active"`
+		KYCStatus  KYCStatus      `json:"kyc_status"`
+		CreatedAt  time.Time      `json:"created_at"`
+		UpdatedAt  time.Time      `json:"updated_at"`
+		KYCProfile *DriverProfile `json:"kyc_profile,omitempty"`
 	}
 
 	// Get pagination parameters
@@ -2396,7 +2555,7 @@ func GetAllDrivers(c *gin.Context) {
 		// Get driver IDs from DriverProfile table that match admin's country
 		var driverProfiles []DriverProfile
 		DB.Where("country_id = ?", *currentUser.CountryID).Find(&driverProfiles)
-		
+
 		var driverIDs []uint
 		for _, profile := range driverProfiles {
 			driverIDs = append(driverIDs, profile.UserID)
@@ -2929,7 +3088,7 @@ func Logout(c *gin.Context) {
 	}
 
 	log.Printf("User %d (%s) logged out successfully. Token version: %d", user.ID, user.Email, user.TokenVersion)
-	
+
 	ResponseJSON(c, http.StatusOK, "Logged out successfully. All sessions have been terminated.", gin.H{
 		"logged_out": true,
 	})
@@ -3039,6 +3198,7 @@ func CreateVehicleType(c *gin.Context) {
 
 	ResponseJSON(c, http.StatusCreated, "Vehicle type created successfully", vehicleType)
 }
+
 // GetAllVehicleTypes returns all vehicle types with optional filtering.
 func GetAllVehicleTypes(c *gin.Context) {
 	categoryID := c.Query("category_id")
@@ -3116,7 +3276,7 @@ func UpdateVehicleType(c *gin.Context) {
 	if categoryID != "" {
 		var catID uint
 		fmt.Sscanf(categoryID, "%d", &catID)
-		
+
 		// Validate category exists
 		var category Category
 		if err := DB.First(&category, catID).Error; err != nil {
@@ -3507,7 +3667,7 @@ func DeleteLoadType(c *gin.Context) {
 // HealthCheck provides a simple health check endpoint
 func HealthCheck(c *gin.Context) {
 	ResponseJSON(c, http.StatusOK, "Service is healthy", gin.H{
-		"status": "ok",
+		"status":    "ok",
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 	})
 }
@@ -3515,13 +3675,13 @@ func HealthCheck(c *gin.Context) {
 // HealthCheckDetailed provides detailed health information about the service
 func HealthCheckDetailed(c *gin.Context) {
 	startTime := time.Now()
-	
+
 	health := gin.H{
-		"status": "ok",
+		"status":    "ok",
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
-		"service": "hauler-backend-services",
-		"version": "1.0.0",
-		"checks": gin.H{},
+		"service":   "hauler-backend-services",
+		"version":   "1.0.0",
+		"checks":    gin.H{},
 	}
 
 	checks := health["checks"].(gin.H)
@@ -3531,7 +3691,7 @@ func HealthCheckDetailed(c *gin.Context) {
 	dbStatus := "ok"
 	dbMessage := "Database connection is healthy"
 	dbStartTime := time.Now()
-	
+
 	if DB != nil {
 		sqlDB, err := DB.DB()
 		if err != nil {
@@ -3551,34 +3711,34 @@ func HealthCheckDetailed(c *gin.Context) {
 		dbMessage = "Database not initialized"
 		overallHealthy = false
 	}
-	
+
 	checks["database"] = gin.H{
-		"status": dbStatus,
-		"message": dbMessage,
+		"status":           dbStatus,
+		"message":          dbMessage,
 		"response_time_ms": time.Since(dbStartTime).Milliseconds(),
 	}
 
 	// Check S3 Connection
 	s3Status := "ok"
 	s3Message := "S3 client is initialized"
-	
+
 	if s3Client == nil {
 		s3Status = "warning"
 		s3Message = "S3 client not initialized - file uploads will fail"
 	}
-	
+
 	checks["s3"] = gin.H{
-		"status": s3Status,
+		"status":  s3Status,
 		"message": s3Message,
-		"bucket": s3Bucket,
-		"region": s3Region,
+		"bucket":  s3Bucket,
+		"region":  s3Region,
 	}
 
 	// Check Environment Variables
 	envStatus := "ok"
 	envMessage := "All required environment variables are set"
 	missingEnvVars := []string{}
-	
+
 	requiredEnvVars := []string{
 		"DATABASE_URL",
 		"JWT_SECRET",
@@ -3587,20 +3747,20 @@ func HealthCheckDetailed(c *gin.Context) {
 		"AWS_REGION",
 		"AWS_S3_BUCKET",
 	}
-	
+
 	for _, envVar := range requiredEnvVars {
 		if os.Getenv(envVar) == "" {
 			missingEnvVars = append(missingEnvVars, envVar)
 		}
 	}
-	
+
 	if len(missingEnvVars) > 0 {
 		envStatus = "warning"
 		envMessage = fmt.Sprintf("Missing environment variables: %v", missingEnvVars)
 	}
-	
+
 	checks["environment"] = gin.H{
-		"status": envStatus,
+		"status":  envStatus,
 		"message": envMessage,
 	}
 
@@ -3608,7 +3768,7 @@ func HealthCheckDetailed(c *gin.Context) {
 	if !overallHealthy {
 		health["status"] = "unhealthy"
 	}
-	
+
 	health["response_time_ms"] = time.Since(startTime).Milliseconds()
 
 	statusCode := http.StatusOK
@@ -3653,8 +3813,8 @@ func ReadinessCheck(c *gin.Context) {
 	}
 
 	response := gin.H{
-		"ready": ready,
-		"checks": checks,
+		"ready":     ready,
+		"checks":    checks,
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 	}
 
@@ -3669,7 +3829,7 @@ func ReadinessCheck(c *gin.Context) {
 // LivenessCheck checks if the service is alive (for Kubernetes liveness probe)
 func LivenessCheck(c *gin.Context) {
 	ResponseJSON(c, http.StatusOK, "Service is alive", gin.H{
-		"alive": true,
+		"alive":     true,
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 	})
 }

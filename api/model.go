@@ -40,22 +40,23 @@ const (
 
 // User represents a user in the haulage system
 type User struct {
-	ID                  uint           `json:"id" gorm:"primaryKey"`
-	Email               string         `json:"email" gorm:"uniqueIndex;not null" binding:"required,email"`
-	Password            string         `json:"-" gorm:"not null" binding:"required,min=6"`
-	FirstName           string         `json:"first_name" binding:"required,min=1,max=100"`
-	LastName            string         `json:"last_name" binding:"required,min=1,max=100"`
-	Phone               string         `json:"phone" binding:"required,min=10,max=20"`
-	Role                UserRole       `json:"role" gorm:"type:varchar(20);not null;default:'customer'"`
-	IsActive            bool           `json:"is_active" gorm:"default:true"`
-	KYCStatus           KYCStatus      `json:"kyc_status" gorm:"type:varchar(20);default:null"` // Only for drivers
-	CountryID           *uint          `json:"country_id"`
-	GenderID            *uint          `json:"gender_id"`
-	MustChangePassword  bool           `json:"must_change_password" gorm:"default:false"` // For admins created by super admin
-	TokenVersion        uint           `json:"-" gorm:"default:0"`
-	CreatedAt           time.Time      `json:"created_at"`
-	UpdatedAt           time.Time      `json:"updated_at"`
-	DeletedAt           gorm.DeletedAt `json:"-" gorm:"index"`
+	ID                 uint           `json:"id" gorm:"primaryKey"`
+	Email              string         `json:"email" gorm:"uniqueIndex;not null" binding:"required,email"`
+	Password           string         `json:"-" gorm:"not null" binding:"required,min=6"`
+	FirstName          string         `json:"first_name" binding:"required,min=1,max=100"`
+	LastName           string         `json:"last_name" binding:"required,min=1,max=100"`
+	Phone              string         `json:"phone" binding:"required,min=10,max=20"`
+	Role               UserRole       `json:"role" gorm:"type:varchar(20);not null;default:'customer'"`
+	IsActive           bool           `json:"is_active" gorm:"default:true"`
+	EmailVerified      bool           `json:"email_verified" gorm:"default:false"`
+	KYCStatus          KYCStatus      `json:"kyc_status" gorm:"type:varchar(20);default:null"` // Only for drivers
+	CountryID          *uint          `json:"country_id"`
+	GenderID           *uint          `json:"gender_id"`
+	MustChangePassword bool           `json:"must_change_password" gorm:"default:false"` // For admins created by super admin
+	TokenVersion       uint           `json:"-" gorm:"default:0"`
+	CreatedAt          time.Time      `json:"created_at"`
+	UpdatedAt          time.Time      `json:"updated_at"`
+	DeletedAt          gorm.DeletedAt `json:"-" gorm:"index"`
 
 	// Relationships
 	Country *Country `json:"country,omitempty" gorm:"foreignKey:CountryID"`
@@ -206,10 +207,10 @@ type PaginationResponse struct {
 
 // ReviewDocumentRequest represents a request to review a KYC document
 type ReviewDocumentRequest struct {
-	DocumentType     string                     `json:"document_type" binding:"required,oneof=selfie license_front license_back vehicle_photo vehicle_registration insurance_document roadworthiness_document"`
-	Status           DocumentVerificationStatus `json:"status" binding:"required,oneof=approved rejected"`
-	RejectionReason  string                     `json:"rejection_reason" binding:"required_if=Status rejected"`
-	ExpiryDate       string                     `json:"expiry_date,omitempty"` // Optional: Required when approving documents with expiry (license, vehicle_registration, insurance, roadworthiness)
+	DocumentType    string                     `json:"document_type" binding:"required,oneof=selfie license_front license_back vehicle_photo vehicle_registration insurance_document roadworthiness_document"`
+	Status          DocumentVerificationStatus `json:"status" binding:"required,oneof=approved rejected"`
+	RejectionReason string                     `json:"rejection_reason" binding:"required_if=Status rejected"`
+	ExpiryDate      string                     `json:"expiry_date,omitempty"` // Optional: Required when approving documents with expiry (license, vehicle_registration, insurance, roadworthiness)
 }
 
 // Category represents a vehicle category in the system
@@ -277,7 +278,7 @@ type VehicleCategory string
 
 const (
 	CategoryMotorcycle   VehicleCategory = "motorcycle"
-	CategoryLCV          VehicleCategory = "lcv"           // Light Commercial Vehicle
+	CategoryLCV          VehicleCategory = "lcv" // Light Commercial Vehicle
 	CategoryMediumTruck  VehicleCategory = "medium_truck"
 	CategoryHeavyTruck   VehicleCategory = "heavy_truck"
 	CategoryVan          VehicleCategory = "van"
@@ -289,24 +290,24 @@ const (
 
 // VehicleType represents a type of vehicle available for hauling
 type VehicleType struct {
-	ID                       uint      `json:"id" gorm:"primaryKey"`
-	Name                     string    `json:"name" gorm:"not null;uniqueIndex"`
-	CategoryID               uint      `json:"category_id" gorm:"not null"`
-	Description              string    `json:"description"`
-	ImageURL                 string    `json:"image_url"`
-	MaxPayloadKg             float64   `json:"max_payload_kg"`
-	CargoLengthM             float64   `json:"cargo_length_m"`
-	CargoWidthM              float64   `json:"cargo_width_m"`
-	CargoHeightM             float64   `json:"cargo_height_m"`
-	CargoVolumeM3            float64   `json:"cargo_volume_m3"`
-	IsTemperatureControlled  bool      `json:"is_temperature_controlled" gorm:"default:false"`
-	IsEnclosed               bool      `json:"is_enclosed" gorm:"default:true"`
-	HasTailLift              bool      `json:"has_tail_lift" gorm:"default:false"`
-	HasCrane                 bool      `json:"has_crane" gorm:"default:false"`
-	RequiresSpecialLicense   bool      `json:"requires_special_license" gorm:"default:false"`
-	IsActive                 bool      `json:"is_active" gorm:"default:true"`
-	CreatedAt                time.Time `json:"created_at"`
-	UpdatedAt                time.Time `json:"updated_at"`
+	ID                      uint      `json:"id" gorm:"primaryKey"`
+	Name                    string    `json:"name" gorm:"not null;uniqueIndex"`
+	CategoryID              uint      `json:"category_id" gorm:"not null"`
+	Description             string    `json:"description"`
+	ImageURL                string    `json:"image_url"`
+	MaxPayloadKg            float64   `json:"max_payload_kg"`
+	CargoLengthM            float64   `json:"cargo_length_m"`
+	CargoWidthM             float64   `json:"cargo_width_m"`
+	CargoHeightM            float64   `json:"cargo_height_m"`
+	CargoVolumeM3           float64   `json:"cargo_volume_m3"`
+	IsTemperatureControlled bool      `json:"is_temperature_controlled" gorm:"default:false"`
+	IsEnclosed              bool      `json:"is_enclosed" gorm:"default:true"`
+	HasTailLift             bool      `json:"has_tail_lift" gorm:"default:false"`
+	HasCrane                bool      `json:"has_crane" gorm:"default:false"`
+	RequiresSpecialLicense  bool      `json:"requires_special_license" gorm:"default:false"`
+	IsActive                bool      `json:"is_active" gorm:"default:true"`
+	CreatedAt               time.Time `json:"created_at"`
+	UpdatedAt               time.Time `json:"updated_at"`
 
 	// Relationships
 	Category *Category `json:"category,omitempty" gorm:"foreignKey:CategoryID"`
@@ -406,9 +407,9 @@ type Gender struct {
 type DocumentVerificationStatus string
 
 const (
-	DocStatusPending  DocumentVerificationStatus = "pending"   // Uploaded, awaiting review
-	DocStatusApproved DocumentVerificationStatus = "approved"  // Verified and approved
-	DocStatusRejected DocumentVerificationStatus = "rejected"  // Rejected, needs reupload
+	DocStatusPending  DocumentVerificationStatus = "pending"  // Uploaded, awaiting review
+	DocStatusApproved DocumentVerificationStatus = "approved" // Verified and approved
+	DocStatusRejected DocumentVerificationStatus = "rejected" // Rejected, needs reupload
 )
 
 // KYCStepStatus represents the overall status of a KYC step
@@ -428,79 +429,79 @@ type DriverProfile struct {
 	CurrentStep uint `json:"current_step" gorm:"default:0"`
 
 	// Step 1: Personal Information
-	FullName      string     `json:"full_name"`
-	PhoneNumber   string     `json:"phone_number"`
-	Email         string     `json:"email"`
-	CountryID     *uint      `json:"country_id"`
-	StateID       *uint      `json:"state_id"`
-	GenderID      *uint      `json:"gender_id"`
-	HouseAddress  string     `json:"house_address"`
-	OfficeAddress string     `json:"office_address"`
-	DateOfBirth   *time.Time `json:"date_of_birth"`
-	Step1Status   KYCStepStatus `json:"step1_status" gorm:"type:varchar(20);default:'not_started'"`
-	Step1RejectionReason string `json:"step1_rejection_reason,omitempty"`
+	FullName             string        `json:"full_name"`
+	PhoneNumber          string        `json:"phone_number"`
+	Email                string        `json:"email"`
+	CountryID            *uint         `json:"country_id"`
+	StateID              *uint         `json:"state_id"`
+	GenderID             *uint         `json:"gender_id"`
+	HouseAddress         string        `json:"house_address"`
+	OfficeAddress        string        `json:"office_address"`
+	DateOfBirth          *time.Time    `json:"date_of_birth"`
+	Step1Status          KYCStepStatus `json:"step1_status" gorm:"type:varchar(20);default:'not_started'"`
+	Step1RejectionReason string        `json:"step1_rejection_reason,omitempty"`
 
 	// Step 2: Selfie
-	SelfieURL            string                     `json:"selfie_url"`
-	SelfieStatus         DocumentVerificationStatus `json:"selfie_status" gorm:"type:varchar(20);default:'pending'"`
-	SelfieRejectionReason string                    `json:"selfie_rejection_reason,omitempty"`
-	Step2Status          KYCStepStatus              `json:"step2_status" gorm:"type:varchar(20);default:'not_started'"`
+	SelfieURL             string                     `json:"selfie_url"`
+	SelfieStatus          DocumentVerificationStatus `json:"selfie_status" gorm:"type:varchar(20);default:'pending'"`
+	SelfieRejectionReason string                     `json:"selfie_rejection_reason,omitempty"`
+	Step2Status           KYCStepStatus              `json:"step2_status" gorm:"type:varchar(20);default:'not_started'"`
 
 	// Step 3: Vehicle Documentation & Driver License
-	LicenseFrontURL              string                     `json:"license_front_url"`
-	LicenseFrontStatus           DocumentVerificationStatus `json:"license_front_status" gorm:"type:varchar(20);default:'pending'"`
-	LicenseFrontRejectionReason  string                     `json:"license_front_rejection_reason,omitempty"`
-	LicenseFrontExpiryDate       *time.Time                 `json:"license_front_expiry_date,omitempty"`
-	
-	LicenseBackURL               string                     `json:"license_back_url"`
-	LicenseBackStatus            DocumentVerificationStatus `json:"license_back_status" gorm:"type:varchar(20);default:'pending'"`
-	LicenseBackRejectionReason   string                     `json:"license_back_rejection_reason,omitempty"`
-	LicenseBackExpiryDate        *time.Time                 `json:"license_back_expiry_date,omitempty"`
-	
-	VehiclePhotoURL              string                     `json:"vehicle_photo_url"`
-	VehiclePhotoStatus           DocumentVerificationStatus `json:"vehicle_photo_status" gorm:"type:varchar(20);default:'pending'"`
-	VehiclePhotoRejectionReason  string                     `json:"vehicle_photo_rejection_reason,omitempty"`
-	
-	VehicleRegistrationURL       string                     `json:"vehicle_registration_url"`
-	VehicleRegistrationStatus    DocumentVerificationStatus `json:"vehicle_registration_status" gorm:"type:varchar(20);default:'pending'"`
-	VehicleRegistrationRejectionReason string                `json:"vehicle_registration_rejection_reason,omitempty"`
-	VehicleRegistrationExpiryDate *time.Time                `json:"vehicle_registration_expiry_date,omitempty"`
-	
-	Step3Status                  KYCStepStatus              `json:"step3_status" gorm:"type:varchar(20);default:'not_started'"`
+	LicenseFrontURL             string                     `json:"license_front_url"`
+	LicenseFrontStatus          DocumentVerificationStatus `json:"license_front_status" gorm:"type:varchar(20);default:'pending'"`
+	LicenseFrontRejectionReason string                     `json:"license_front_rejection_reason,omitempty"`
+	LicenseFrontExpiryDate      *time.Time                 `json:"license_front_expiry_date,omitempty"`
+
+	LicenseBackURL             string                     `json:"license_back_url"`
+	LicenseBackStatus          DocumentVerificationStatus `json:"license_back_status" gorm:"type:varchar(20);default:'pending'"`
+	LicenseBackRejectionReason string                     `json:"license_back_rejection_reason,omitempty"`
+	LicenseBackExpiryDate      *time.Time                 `json:"license_back_expiry_date,omitempty"`
+
+	VehiclePhotoURL             string                     `json:"vehicle_photo_url"`
+	VehiclePhotoStatus          DocumentVerificationStatus `json:"vehicle_photo_status" gorm:"type:varchar(20);default:'pending'"`
+	VehiclePhotoRejectionReason string                     `json:"vehicle_photo_rejection_reason,omitempty"`
+
+	VehicleRegistrationURL             string                     `json:"vehicle_registration_url"`
+	VehicleRegistrationStatus          DocumentVerificationStatus `json:"vehicle_registration_status" gorm:"type:varchar(20);default:'pending'"`
+	VehicleRegistrationRejectionReason string                     `json:"vehicle_registration_rejection_reason,omitempty"`
+	VehicleRegistrationExpiryDate      *time.Time                 `json:"vehicle_registration_expiry_date,omitempty"`
+
+	Step3Status KYCStepStatus `json:"step3_status" gorm:"type:varchar(20);default:'not_started'"`
 
 	// Step 4: Work Preferences
-	DaysOfWork                   string    `json:"days_of_work" gorm:"type:jsonb;default:'[]'"` // JSON array: ["Monday", "Tuesday", ...]
-	VehicleTypeID                *uint     `json:"vehicle_type_id"` // Single vehicle type
-	WorkStartTime                string    `json:"work_start_time"` // Format: "09:00"
-	WorkEndTime                  string    `json:"work_end_time"`   // Format: "17:00"
-	Step4Status                  KYCStepStatus `json:"step4_status" gorm:"type:varchar(20);default:'not_started'"`
+	DaysOfWork    string        `json:"days_of_work" gorm:"type:jsonb;default:'[]'"` // JSON array: ["Monday", "Tuesday", ...]
+	VehicleTypeID *uint         `json:"vehicle_type_id"`                             // Single vehicle type
+	WorkStartTime string        `json:"work_start_time"`                             // Format: "09:00"
+	WorkEndTime   string        `json:"work_end_time"`                               // Format: "17:00"
+	Step4Status   KYCStepStatus `json:"step4_status" gorm:"type:varchar(20);default:'not_started'"`
 
 	// Step 5: Vehicle Details & Documents
-	PlateNumber                  string                     `json:"plate_number" gorm:"uniqueIndex"`
-	VehicleBrand                 string                     `json:"vehicle_brand"`
-	VehicleModel                 string                     `json:"vehicle_model"`
-	VehicleYear                  string                     `json:"vehicle_year"`
-	VehicleColor                 string                     `json:"vehicle_color"`
-	InsuranceDocumentURL         string                     `json:"insurance_document_url"`
-	InsuranceDocumentStatus      DocumentVerificationStatus `json:"insurance_document_status" gorm:"type:varchar(20);default:'pending'"`
-	InsuranceDocumentRejectionReason string                 `json:"insurance_document_rejection_reason,omitempty"`
-	InsuranceDocumentExpiryDate  *time.Time                 `json:"insurance_document_expiry_date,omitempty"`
-	RoadworthinessDocumentURL    string                     `json:"roadworthiness_document_url"`
-	RoadworthinessDocumentStatus DocumentVerificationStatus `json:"roadworthiness_document_status" gorm:"type:varchar(20);default:'pending'"`
-	RoadworthinessDocumentRejectionReason string            `json:"roadworthiness_document_rejection_reason,omitempty"`
-	RoadworthinessDocumentExpiryDate *time.Time             `json:"roadworthiness_document_expiry_date,omitempty"`
-	Step5Status                  KYCStepStatus              `json:"step5_status" gorm:"type:varchar(20);default:'not_started'"`
+	PlateNumber                           string                     `json:"plate_number" gorm:"uniqueIndex"`
+	VehicleBrand                          string                     `json:"vehicle_brand"`
+	VehicleModel                          string                     `json:"vehicle_model"`
+	VehicleYear                           string                     `json:"vehicle_year"`
+	VehicleColor                          string                     `json:"vehicle_color"`
+	InsuranceDocumentURL                  string                     `json:"insurance_document_url"`
+	InsuranceDocumentStatus               DocumentVerificationStatus `json:"insurance_document_status" gorm:"type:varchar(20);default:'pending'"`
+	InsuranceDocumentRejectionReason      string                     `json:"insurance_document_rejection_reason,omitempty"`
+	InsuranceDocumentExpiryDate           *time.Time                 `json:"insurance_document_expiry_date,omitempty"`
+	RoadworthinessDocumentURL             string                     `json:"roadworthiness_document_url"`
+	RoadworthinessDocumentStatus          DocumentVerificationStatus `json:"roadworthiness_document_status" gorm:"type:varchar(20);default:'pending'"`
+	RoadworthinessDocumentRejectionReason string                     `json:"roadworthiness_document_rejection_reason,omitempty"`
+	RoadworthinessDocumentExpiryDate      *time.Time                 `json:"roadworthiness_document_expiry_date,omitempty"`
+	Step5Status                           KYCStepStatus              `json:"step5_status" gorm:"type:varchar(20);default:'not_started'"`
 
 	// Admin review tracking
-	ReviewedBy   *uint      `json:"reviewed_by,omitempty"` // Admin user ID who last reviewed
-	ReviewedAt   *time.Time `json:"reviewed_at,omitempty"`
+	ReviewedBy *uint      `json:"reviewed_by,omitempty"` // Admin user ID who last reviewed
+	ReviewedAt *time.Time `json:"reviewed_at,omitempty"`
 
 	// Relationships
-	Country       *Country     `json:"country,omitempty" gorm:"foreignKey:CountryID"`
-	State         *State       `json:"state,omitempty" gorm:"foreignKey:StateID"`
-	Gender        *Gender      `json:"gender,omitempty" gorm:"foreignKey:GenderID"`
-	VehicleType   *VehicleType `json:"vehicle_type,omitempty" gorm:"foreignKey:VehicleTypeID"`
-	ReviewedByUser *User       `json:"reviewed_by_user,omitempty" gorm:"foreignKey:ReviewedBy"`
+	Country        *Country     `json:"country,omitempty" gorm:"foreignKey:CountryID"`
+	State          *State       `json:"state,omitempty" gorm:"foreignKey:StateID"`
+	Gender         *Gender      `json:"gender,omitempty" gorm:"foreignKey:GenderID"`
+	VehicleType    *VehicleType `json:"vehicle_type,omitempty" gorm:"foreignKey:VehicleTypeID"`
+	ReviewedByUser *User        `json:"reviewed_by_user,omitempty" gorm:"foreignKey:ReviewedBy"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -521,11 +522,11 @@ type KYCStep1Request struct {
 
 // KYCStep4Request represents the request payload for KYC step 4
 type KYCStep4Request struct {
-	DaysOfWork      []string `json:"daysOfWork" binding:"required,min=1"`      // ["Monday", "Tuesday", ...]
-	VehicleTypeID   uint     `json:"vehicleTypeId" binding:"required"`         // Single vehicle type ID
-	LoadTypeIDs     []uint   `json:"loadTypeIds"`                              // Optional: [1, 2] or empty for "All"
-	WorkStartTime   string   `json:"workStartTime" binding:"required"`         // "09:00"
-	WorkEndTime     string   `json:"workEndTime" binding:"required"`           // "17:00"
+	DaysOfWork    []string `json:"daysOfWork" binding:"required,min=1"` // ["Monday", "Tuesday", ...]
+	VehicleTypeID uint     `json:"vehicleTypeId" binding:"required"`    // Single vehicle type ID
+	LoadTypeIDs   []uint   `json:"loadTypeIds"`                         // Optional: [1, 2] or empty for "All"
+	WorkStartTime string   `json:"workStartTime" binding:"required"`    // "09:00"
+	WorkEndTime   string   `json:"workEndTime" binding:"required"`      // "17:00"
 }
 
 // ResponseJSON sends a standardized JSON response
