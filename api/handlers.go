@@ -3412,6 +3412,8 @@ func CreateCategory(c *gin.Context) {
 		Name:        req.Name,
 		Code:        req.Code,
 		Description: req.Description,
+		MinWeightKg: req.MinWeightKg,
+		MaxWeightKg: req.MaxWeightKg,
 		IsActive:    true,
 	}
 
@@ -3494,6 +3496,14 @@ func UpdateCategory(c *gin.Context) {
 	// Update description if provided
 	if req.Description != "" {
 		category.Description = req.Description
+	}
+
+	// Update weight fields if provided
+	if req.MinWeightKg != nil {
+		category.MinWeightKg = *req.MinWeightKg
+	}
+	if req.MaxWeightKg != nil {
+		category.MaxWeightKg = *req.MaxWeightKg
 	}
 
 	// Update is_active if provided

@@ -219,6 +219,8 @@ type Category struct {
 	Name        string    `json:"name" gorm:"uniqueIndex;not null"`
 	Code        string    `json:"code" gorm:"uniqueIndex;not null;type:varchar(50)"` // e.g., "motorcycle", "van"
 	Description string    `json:"description"`
+	MinWeightKg float64   `json:"min_weight_kg" gorm:"default:0"`
+	MaxWeightKg float64   `json:"max_weight_kg" gorm:"default:0"`
 	IsActive    bool      `json:"is_active" gorm:"default:true"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
@@ -245,17 +247,21 @@ type DriverLoadType struct {
 
 // CreateCategoryRequest represents a request to create a category
 type CreateCategoryRequest struct {
-	Name        string `json:"name" binding:"required,min=2,max=100"`
-	Code        string `json:"code" binding:"required,min=2,max=50"`
-	Description string `json:"description" binding:"omitempty,max=500"`
+	Name        string  `json:"name" binding:"required,min=2,max=100"`
+	Code        string  `json:"code" binding:"required,min=2,max=50"`
+	Description string  `json:"description" binding:"omitempty,max=500"`
+	MinWeightKg float64 `json:"min_weight_kg" binding:"omitempty,min=0"`
+	MaxWeightKg float64 `json:"max_weight_kg" binding:"omitempty,min=0"`
 }
 
 // UpdateCategoryRequest represents a request to update a category
 type UpdateCategoryRequest struct {
-	Name        string `json:"name" binding:"omitempty,min=2,max=100"`
-	Code        string `json:"code" binding:"omitempty,min=2,max=50"`
-	Description string `json:"description" binding:"omitempty,max=500"`
-	IsActive    *bool  `json:"is_active"`
+	Name        string   `json:"name" binding:"omitempty,min=2,max=100"`
+	Code        string   `json:"code" binding:"omitempty,min=2,max=50"`
+	Description string   `json:"description" binding:"omitempty,max=500"`
+	MinWeightKg *float64 `json:"min_weight_kg" binding:"omitempty,min=0"`
+	MaxWeightKg *float64 `json:"max_weight_kg" binding:"omitempty,min=0"`
+	IsActive    *bool    `json:"is_active"`
 }
 
 // CreateLoadTypeRequest represents a request to create a load type
