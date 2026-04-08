@@ -2062,7 +2062,7 @@ func InitDB() {
 	}
 
 	// Migrate the schema
-	if err = DB.AutoMigrate(&User{}, &VerificationCode{}, &Country{}, &State{}, &Gender{}, &DriverProfile{}, &VehicleType{}, &Category{}, &LoadType{}, &DriverLoadType{}); err != nil {
+	if err = DB.AutoMigrate(&User{}, &VerificationCode{}, &Country{}, &State{}, &Gender{}, &DriverProfile{}, &VehicleType{}, &Category{}, &LoadType{}, &DriverLoadType{}, &Order{}, &OrderEventLog{}); err != nil {
 		log.Fatal("Failed to migrate schema:", err)
 	}
 

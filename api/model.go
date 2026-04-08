@@ -245,6 +245,55 @@ type DriverLoadType struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
+// OrderStatus represents the current state of an order in the orchestrator.
+type OrderStatus string
+
+const (
+	OrderStatusCreated           OrderStatus = "created"
+	OrderStatusPricingRequested  OrderStatus = "pricing_requested"
+	OrderStatusOnHold            OrderStatus = "on_hold"
+	OrderStatusDispatchRequested OrderStatus = "dispatch_requested"
+	OrderStatusDriverAssigned    OrderStatus = "driver_assigned"
+	OrderStatusPickedUp          OrderStatus = "picked_up"
+	OrderStatusDelivered         OrderStatus = "delivered"
+	OrderStatusCancelled         OrderStatus = "cancelled"
+)
+
+// Order represents a customer delivery order.
+type Order struct {
+	ID                      uint           `json:"id" gorm:"primaryKey"`
+	UserID                  uint           `json:"user_id" gorm:"not null;index"`
+	GeoCell                 string         `json:"geo_cell" gorm:"not null;index"`
+	PickupAddress           string         `json:"pickup_address" gorm:"not null"`
+	DropoffAddress          string         `json:"dropoff_address" gorm:"not null"`
+	PickupLatitude          float64        `json:"pickup_latitude" gorm:"not null"`
+	PickupLongitude         float64        `json:"pickup_longitude" gorm:"not null"`
+	DropoffLatitude         float64        `json:"dropoff_latitude" gorm:"not null"`
+	DropoffLongitude        float64        `json:"dropoff_longitude" gorm:"not null"`
+	VehicleTypeID           uint           `json:"vehicle_type_id" gorm:"not null;index"`
+	LoadTypeID              uint           `json:"load_type_id" gorm:"not null;index"`
+	CategoryID              *uint          `json:"category_id,omitempty" gorm:"index"`
+	WeightKg                float64        `json:"weight_kg" gorm:"not null"`
+	RequiresSpecialHandling bool           `json:"requires_special_handling" gorm:"default:false"`
+	PreferredPickupTime     string         `json:"preferred_pickup_time,omitempty"`
+	SpecialInstructions     string         `json:"special_instructions,omitempty"`
+	EstimatedDistanceKm     float64        `json:"estimated_distance_km" gorm:"default:0"`
+	EstimatedTimeMins       float64        `json:"estimated_time_mins" gorm:"default:0"`
+	FeeCents                *int           `json:"fee_cents,omitempty"`
+	Currency                string         `json:"currency" gorm:"type:varchar(10);default:'NGN'"`
+	DriverID                *uint          `json:"driver_id,omitempty" gorm:"index"`
+	DriverRateCents         *int           `json:"driver_rate_cents,omitempty"`
+	Status                  OrderStatus    `json:"status" gorm:"type:varchar(50);not null;default:'created'"`
+	CreatedAt               time.Time      `json:"created_at"`
+	UpdatedAt               time.Time      `json:"updated_at"`
+	DeletedAt               gorm.DeletedAt `json:"-" gorm:"index"`
+
+	User        *User        `json:"user,omitempty" gorm:"foreignKey:UserID"`
+	VehicleType *VehicleType `json:"vehicle_type,omitempty" gorm:"foreignKey:VehicleTypeID"`
+	LoadType    *LoadType    `json:"load_type,omitempty" gorm:"foreignKey:LoadTypeID"`
+	Category    *Category    `json:"category,omitempty" gorm:"foreignKey:CategoryID"`
+}
+
 // CreateCategoryRequest represents a request to create a category
 type CreateCategoryRequest struct {
 	Name        string  `json:"name" binding:"required,min=2,max=100"`

@@ -1,8 +1,13 @@
 package main
 
 import (
+	"fmt"
 	"hauler-backend-services/api"
+	"log"
 	"os"
+	"os/signal"
+	"strings"
+	"syscall"
 	"time"
 
 	"github.com/gin-contrib/cors"
@@ -11,6 +16,7 @@ import (
 
 func main() {
 	api.InitDB()
+	api.InitEventProducer()
 	r := gin.Default()
 
 	// CORS configuration
@@ -65,6 +71,10 @@ func main() {
 	protected := r.Group("/api", api.JWTAuthMiddleware())
 	{
 		protected.GET("/profile", api.GetProfile)
+		// Order management
+		protected.POST("/orders", api.CreateOrder)
+		protected.GET("/orders", api.GetOrders)
+		protected.GET("/orders/:id", api.GetOrder)
 		// KYC management
 		protected.PUT("/driver/kyc-status", api.UpdateKYCStatus)     // Driver updates own KYC
 		protected.PUT("/driver/kyc-status/:id", api.UpdateKYCStatus) // Admin updates driver KYC
@@ -110,6 +120,7 @@ func main() {
 		admin.GET("/drivers/:id", api.GetDriverDetails)
 		admin.PUT("/drivers/:id/suspend", api.SuspendDriver)
 		admin.POST("/drivers/:id/review-document", api.ReviewDocument)
+		admin.PATCH("/orders/:id/status", api.UpdateOrderStatus)
 		admin.POST("/vehicle-types", api.CreateVehicleType)
 		admin.PUT("/vehicle-types/:id", api.UpdateVehicleType)
 		admin.DELETE("/vehicle-types/:id", api.DeleteVehicleType)
@@ -127,9 +138,88 @@ func main() {
 	r.GET("/health/ready", api.ReadinessCheck)
 	r.GET("/health/live", api.LivenessCheck)
 
+	// Start streaming services if Kafka is configured
+	var dispatchMatcher *api.DispatchMatcher
+	var pricingService *api.PricingService
+	var trackingService *api.TrackingService
+	var notificationService *api.NotificationService
+	kafkaBrokers := strings.Split(strings.TrimSpace(os.Getenv("KAFKA_BROKERS")), ",")
+	if len(kafkaBrokers) > 0 && kafkaBrokers[0] != "" {
+		dispatchMatcher = api.NewDispatchMatcher(kafkaBrokers)
+		if err := dispatchMatcher.Start(); err != nil {
+			log.Printf("Warning: Failed to start dispatch matcher: %v. Dispatch will not function.", err)
+		} else {
+			log.Println("[Dispatch] Matcher started successfully")
+		}
+
+		pricingService = api.NewPricingService(kafkaBrokers)
+		if err := pricingService.Start(); err != nil {
+			log.Printf("Warning: Failed to start pricing service: %v. Pricing will not function.", err)
+		} else {
+			log.Println("[Pricing] Service started successfully")
+		}
+
+		trackingService = api.NewTrackingService(kafkaBrokers)
+		if err := trackingService.Start(); err != nil {
+			log.Printf("Warning: Failed to start tracking service: %v. Tracking will not function.", err)
+		} else {
+			log.Println("[Tracking] Service started successfully")
+		}
+
+		notificationService = api.NewNotificationService(kafkaBrokers)
+		if err := notificationService.Start(); err != nil {
+			log.Printf("Warning: Failed to start notification service: %v. Notifications will not function.", err)
+		} else {
+			log.Println("[Notifications] Service started successfully")
+		}
+	}
+
+	// Setup graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		sig := <-sigChan
+		log.Printf("Received signal: %v. Shutting down gracefully...", sig)
+
+		// Stop all streaming services
+		if dispatchMatcher != nil {
+			if err := dispatchMatcher.Stop(); err != nil {
+				log.Printf("Error stopping dispatch matcher: %v", err)
+			} else {
+				log.Println("[Dispatch] Matcher stopped")
+			}
+		}
+		if pricingService != nil {
+			if err := pricingService.Stop(); err != nil {
+				log.Printf("Error stopping pricing service: %v", err)
+			} else {
+				log.Println("[Pricing] Service stopped")
+			}
+		}
+		if trackingService != nil {
+			if err := trackingService.Stop(); err != nil {
+				log.Printf("Error stopping tracking service: %v", err)
+			} else {
+				log.Println("[Tracking] Service stopped")
+			}
+		}
+		if notificationService != nil {
+			if err := notificationService.Stop(); err != nil {
+				log.Printf("Error stopping notification service: %v", err)
+			} else {
+				log.Println("[Notifications] Service stopped")
+			}
+		}
+
+		os.Exit(0)
+	}()
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
+
+	fmt.Printf("Starting server on port %s\n", port)
 	r.Run(":" + port)
 }

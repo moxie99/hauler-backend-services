@@ -187,6 +187,37 @@ Protected routes require `Authorization: Bearer <token>`.
   - `data`: object with `user`
   - Drivers also receive `kyc_current_step`, `kyc_status`, and `total_steps`
 
+### POST `/api/orders`
+- Auth: required
+- Request JSON:
+  - `pickup_address` string
+  - `dropoff_address` string
+  - `pickup_latitude` number
+  - `pickup_longitude` number
+  - `dropoff_latitude` number
+  - `dropoff_longitude` number
+  - `geo_cell` string
+  - `vehicle_type_id` uint
+  - `load_type_id` uint
+  - `category_id` uint optional
+  - `weight_kg` number
+  - `requires_special_handling` bool
+  - `preferred_pickup_time` string optional
+  - `special_instructions` string optional
+- Response:
+  - `data`: created `Order` object
+
+### GET `/api/orders`
+- Auth: required
+- Optional query params: `page`, `page_size`, `status`
+- Response:
+  - `data`: array of `Order` objects for the authenticated customer
+
+### GET `/api/orders/:id`
+- Auth: required
+- Response:
+  - `data`: single `Order` object
+
 ### PUT `/api/driver/kyc-status`
 - Auth: required
 - Request JSON:
@@ -436,6 +467,19 @@ Protected routes require `Authorization: Bearer <token>`.
 - Response:
   - `data`: `{ driver, kyc_profile }`
 
+### PATCH `/api/admin/orders/:id/status`
+- Auth: required
+- Admin or super admin
+- Request JSON:
+  - `status` string (`pricing_requested`, `on_hold`, `dispatch_requested`, `driver_assigned`, `picked_up`, `delivered`, `cancelled`)
+  - `driver_id` uint optional
+  - `fee_cents` int optional
+  - `driver_rate_cents` int optional
+  - `estimated_time_mins` number optional
+  - `estimated_distance_km` number optional
+- Response:
+  - `data`: updated `Order` object
+
 ### POST `/api/admin/vehicle-types`
 - Auth: required
 - Admin or super admin
@@ -519,11 +563,39 @@ Protected routes require `Authorization: Bearer <token>`.
 - Response:
   - `data`: updated `LoadType` object
 
-### DELETE `/api/admin/load-types/:id`
-- Auth: required
-- Admin or super admin
-- Response:
-  - `data`: null
+---
+
+## Event-driven architecture
+
+This service publishes and consumes Kafka events to support real-time dispatch, pricing, tracking, and notifications.
+
+### Topics
+- `order-events`
+  - publishes `OrderPlaced` and `OrderStatusUpdated` events
+- `dispatch-events`
+  - publishes `DriverAssigned` events
+- `pricing-events`
+  - publishes `PricingCalculated` events
+- `tracking-events`
+  - publishes `TrackingUpdated` events
+- `notifications`
+  - publishes `NotificationEvent` payloads for downstream delivery
+
+### Event contracts
+- `OrderPlaced`
+  - emitted after order creation
+  - contains order details, geo-cell, vehicle/load type, weight, and location
+- `OrderStatusUpdated`
+  - emitted after status transitions
+  - contains status, driver assignment, fee, ETA, and distance
+- `DriverAssigned`
+  - emitted when a driver is matched to an order
+- `PricingCalculated`
+  - emitted when pricing has been calculated for an order
+- `TrackingUpdated`
+  - emitted when tracking or status metadata changes
+- `NotificationEvent`
+  - emitted to the notifications topic for email/SMS/push delivery
 
 ---
 
