@@ -213,10 +213,31 @@ Protected routes require `Authorization: Bearer <token>`.
 - Response:
   - `data`: array of `Order` objects for the authenticated customer
 
-### GET `/api/orders/:id`
+### GET `/api/orders/:id/tracking`
 - Auth: required
 - Response:
-  - `data`: single `Order` object
+  - `data`: object containing order details, driver info, and current driver location
+
+### PUT `/api/orders/:id/tracking`
+- Auth: required (assigned driver only)
+- Request JSON:
+  - `status` string (`picked_up`, `en_route`, `delivered`)
+  - `latitude` number optional (driver's current location)
+  - `longitude` number optional (driver's current location)
+  - `estimated_arrival_mins` number optional
+  - `message` string optional
+- Response:
+  - `data`: tracking update confirmation
+
+### GET `/api/orders/:id/ws`
+- Auth: required
+- WebSocket endpoint for real-time order tracking updates
+- Receives live updates for order status changes and driver location
+
+### GET `/api/orders/:id/sse`
+- Auth: required
+- Server-Sent Events endpoint for real-time order tracking
+- Alternative to WebSocket for browsers without WebSocket support
 
 ### PUT `/api/driver/kyc-status`
 - Auth: required
@@ -467,14 +488,34 @@ Protected routes require `Authorization: Bearer <token>`.
 - Response:
   - `data`: `{ driver, kyc_profile }`
 
+### GET `/api/admin/orders`
+- Auth: required
+- Admin or super admin
+- Query parameters:
+  - `page` int optional (default: 1)
+  - `page_size` int optional (default: 20, max: 100)
+  - `status` string optional (filter by order status)
+  - `customer_id` uint optional (filter by customer ID)
+  - `driver_id` uint optional (filter by driver ID)
+  - `vehicle_type_id` uint optional (filter by vehicle type ID)
+  - `geo_cell` string optional (filter by geo cell)
+  - `pickup_date` string optional (filter by pickup date, format: YYYY-MM-DD)
+- Response:
+  - `data`: object containing:
+    - `orders` array of `Order` objects with preloaded relationships
+    - `page` int
+    - `page_size` int
+    - `total` int (total number of orders)
+    - `total_pages` int
+
 ### PATCH `/api/admin/orders/:id/status`
 - Auth: required
 - Admin or super admin
 - Request JSON:
   - `status` string (`pricing_requested`, `on_hold`, `dispatch_requested`, `driver_assigned`, `picked_up`, `delivered`, `cancelled`)
   - `driver_id` uint optional
-  - `fee_cents` int optional
-  - `driver_rate_cents` int optional
+  - `fee_units` int optional
+  - `driver_rate_units` int optional
   - `estimated_time_mins` number optional
   - `estimated_distance_km` number optional
 - Response:

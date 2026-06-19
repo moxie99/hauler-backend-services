@@ -17,6 +17,7 @@ import (
 func main() {
 	api.InitDB()
 	api.InitEventProducer()
+	api.InitWebSocketHub() // Initialize WebSocket hub
 	r := gin.Default()
 
 	// CORS configuration
@@ -75,6 +76,11 @@ func main() {
 		protected.POST("/orders", api.CreateOrder)
 		protected.GET("/orders", api.GetOrders)
 		protected.GET("/orders/:id", api.GetOrder)
+		protected.POST("/orders/:id/confirm", api.ConfirmOrder)
+		protected.GET("/orders/:id/tracking", api.GetOrderTracking)
+		protected.PUT("/orders/:id/tracking", api.UpdateOrderTracking)
+		protected.GET("/orders/:id/ws", api.HandleWebSocket) // WebSocket for real-time tracking
+		protected.GET("/orders/:id/sse", api.HandleSSE)      // Server-Sent Events for real-time tracking
 		// KYC management
 		protected.PUT("/driver/kyc-status", api.UpdateKYCStatus)     // Driver updates own KYC
 		protected.PUT("/driver/kyc-status/:id", api.UpdateKYCStatus) // Admin updates driver KYC
@@ -85,6 +91,9 @@ func main() {
 		protected.POST("/driver/kyc/step/3", api.SubmitKYCStep3)
 		protected.POST("/driver/kyc/step/4", api.SubmitKYCStep4)
 		protected.POST("/driver/kyc/step/5", api.SubmitKYCStep5)
+		// Location management
+		protected.POST("/location", api.UpdateLocation)
+		protected.GET("/location/:id", api.GetLocation)
 		// Token refresh
 		protected.POST("/auth/refresh-token", api.RefreshToken)
 		// Change password
@@ -120,6 +129,7 @@ func main() {
 		admin.GET("/drivers/:id", api.GetDriverDetails)
 		admin.PUT("/drivers/:id/suspend", api.SuspendDriver)
 		admin.POST("/drivers/:id/review-document", api.ReviewDocument)
+		admin.GET("/orders", api.GetAllOrders)
 		admin.PATCH("/orders/:id/status", api.UpdateOrderStatus)
 		admin.POST("/vehicle-types", api.CreateVehicleType)
 		admin.PUT("/vehicle-types/:id", api.UpdateVehicleType)

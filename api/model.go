@@ -245,6 +245,23 @@ type DriverLoadType struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
+// DriverVehicleType represents the many-to-many relationship between drivers and vehicle types
+type DriverVehicleType struct {
+	ID            uint      `json:"id" gorm:"primaryKey"`
+	DriverID      uint      `json:"driver_id" gorm:"not null;index"`
+	VehicleTypeID uint      `json:"vehicle_type_id" gorm:"not null;index"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+// UserLocation represents the current location of a user (driver or customer)
+type UserLocation struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	UserID    uint      `json:"user_id" gorm:"not null;uniqueIndex"`
+	Latitude  float64   `json:"latitude" gorm:"not null"`
+	Longitude float64   `json:"longitude" gorm:"not null"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 // OrderStatus represents the current state of an order in the orchestrator.
 type OrderStatus string
 
@@ -279,10 +296,11 @@ type Order struct {
 	SpecialInstructions     string         `json:"special_instructions,omitempty"`
 	EstimatedDistanceKm     float64        `json:"estimated_distance_km" gorm:"default:0"`
 	EstimatedTimeMins       float64        `json:"estimated_time_mins" gorm:"default:0"`
-	FeeCents                *int           `json:"fee_cents,omitempty"`
+	FeeUnits                *int           `json:"fee_units,omitempty"`
+	BargainedPriceUnits     *int           `json:"bargained_price_units,omitempty"`
 	Currency                string         `json:"currency" gorm:"type:varchar(10);default:'NGN'"`
 	DriverID                *uint          `json:"driver_id,omitempty" gorm:"index"`
-	DriverRateCents         *int           `json:"driver_rate_cents,omitempty"`
+	DriverRateUnits         *int           `json:"driver_rate_units,omitempty"`
 	Status                  OrderStatus    `json:"status" gorm:"type:varchar(50);not null;default:'created'"`
 	CreatedAt               time.Time      `json:"created_at"`
 	UpdatedAt               time.Time      `json:"updated_at"`
@@ -292,6 +310,7 @@ type Order struct {
 	VehicleType *VehicleType `json:"vehicle_type,omitempty" gorm:"foreignKey:VehicleTypeID"`
 	LoadType    *LoadType    `json:"load_type,omitempty" gorm:"foreignKey:LoadTypeID"`
 	Category    *Category    `json:"category,omitempty" gorm:"foreignKey:CategoryID"`
+	Driver      *User        `json:"driver,omitempty" gorm:"foreignKey:DriverID"`
 }
 
 // CreateCategoryRequest represents a request to create a category

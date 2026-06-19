@@ -101,9 +101,9 @@ func (ns *NotificationService) handlePricingEvents(key []byte, value []byte) err
 		RecipientID: recipientID,
 		Channel:     "email",
 		Subject:     "Pricing calculated for your order",
-		Message:     fmt.Sprintf("Your order pricing is ready. Fee: %d %s. ETA: %.0f mins.", pricingEvent.FeeCents, pricingEvent.Currency, pricingEvent.EstimatedTimeMins),
+		Message:     fmt.Sprintf("Your order pricing is ready. Fee: %d %s. ETA: %.0f mins.", pricingEvent.FeeUnits, pricingEvent.Currency, pricingEvent.EstimatedTimeMins),
 		Payload: map[string]any{
-			"fee_cents":             pricingEvent.FeeCents,
+			"fee_units":             pricingEvent.FeeUnits,
 			"currency":              pricingEvent.Currency,
 			"estimated_time_mins":   pricingEvent.EstimatedTimeMins,
 			"estimated_distance_km": pricingEvent.EstimatedDistanceKm,

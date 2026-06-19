@@ -12,7 +12,7 @@ type PricingCalculatedEvent struct {
 	EventType           string    `json:"event_type"`
 	OrderID             uint      `json:"order_id"`
 	GeoCell             string    `json:"geo_cell"`
-	FeeCents            int       `json:"fee_cents"`
+	FeeUnits            int       `json:"fee_units"`
 	Currency            string    `json:"currency"`
 	EstimatedDistanceKm float64   `json:"estimated_distance_km"`
 	EstimatedTimeMins   float64   `json:"estimated_time_mins"`
@@ -63,15 +63,20 @@ func (ps *PricingService) handleOrderEvent(key []byte, value []byte) error {
 
 	log.Printf("[Pricing] Calculating price for order %d", orderPlaced.OrderID)
 
-	estimatedDistance := ps.calculateDistance(orderPlaced.PickupLatitude, orderPlaced.PickupLongitude, orderPlaced.DropoffLatitude, orderPlaced.DropoffLongitude)
-	estimatedTime := ps.estimateTimeMins(estimatedDistance)
-	feeCents := ps.calculateFeeCents(estimatedDistance, orderPlaced.WeightKg, orderPlaced.RequiresSpecialHandling)
+	estimatedDistance := haversineDistance(orderPlaced.PickupLatitude, orderPlaced.PickupLongitude, orderPlaced.DropoffLatitude, orderPlaced.DropoffLongitude)
+	estimatedTime := EstimateTimeMins(estimatedDistance)
+	feeUnits := CalculateFeeUnits(estimatedDistance, orderPlaced.WeightKg, orderPlaced.RequiresSpecialHandling)
+
+	log.Printf("[Pricing] DEBUG - Pickup: %.6f,%.6f | Dropoff: %.6f,%.6f | Distance: %.2f km | Fee: %d units",
+		orderPlaced.PickupLatitude, orderPlaced.PickupLongitude,
+		orderPlaced.DropoffLatitude, orderPlaced.DropoffLongitude,
+		estimatedDistance, feeUnits)
 
 	pricingEvent := PricingCalculatedEvent{
 		EventType:           OrderEventTypePricingCalculated,
 		OrderID:             orderPlaced.OrderID,
 		GeoCell:             orderPlaced.GeoCell,
-		FeeCents:            feeCents,
+		FeeUnits:            feeUnits,
 		Currency:            "NGN",
 		EstimatedDistanceKm: estimatedDistance,
 		EstimatedTimeMins:   estimatedTime,
@@ -80,7 +85,7 @@ func (ps *PricingService) handleOrderEvent(key []byte, value []byte) error {
 
 	PublishEventWithKey(PricingEventsTopic, []byte(orderPlaced.GeoCell), pricingEvent)
 
-	if err := ps.updateOrderEstimates(orderPlaced.OrderID, feeCents, estimatedDistance, estimatedTime); err != nil {
+	if err := ps.updateOrderEstimates(orderPlaced.OrderID, feeUnits, estimatedDistance, estimatedTime); err != nil {
 		log.Printf("[Pricing] failed to update order %d estimates: %v", orderPlaced.OrderID, err)
 	}
 
@@ -88,14 +93,7 @@ func (ps *PricingService) handleOrderEvent(key []byte, value []byte) error {
 }
 
 func (ps *PricingService) calculateFeeCents(distanceKm, weightKg float64, specialHandling bool) int {
-	baseCents := 1500
-	distanceCents := int(math.Ceil(distanceKm * 120))
-	weightCents := int(math.Ceil(weightKg * 40))
-	specialCents := 0
-	if specialHandling {
-		specialCents = 2000
-	}
-	return baseCents + distanceCents + weightCents + specialCents
+	return CalculateFeeUnits(distanceKm, weightKg, specialHandling)
 }
 
 func (ps *PricingService) calculateDistance(lat1, lng1, lat2, lng2 float64) float64 {
@@ -103,18 +101,34 @@ func (ps *PricingService) calculateDistance(lat1, lng1, lat2, lng2 float64) floa
 }
 
 func (ps *PricingService) estimateTimeMins(distanceKm float64) float64 {
+	return EstimateTimeMins(distanceKm)
+}
+
+// CalculateFeeUnits computes the order fee in the smallest currency unit (e.g. kobo for NGN, cents for USD).
+func CalculateFeeUnits(distanceKm, weightKg float64, specialHandling bool) int {
+	baseUnits := 1500
+	distanceUnits := int(math.Ceil(distanceKm * 120))
+	weightUnits := int(math.Ceil(weightKg * 40))
+	specialUnits := 0
+	if specialHandling {
+		specialUnits = 2000
+	}
+	return baseUnits + distanceUnits + weightUnits + specialUnits
+}
+
+// EstimateTimeMins estimates travel time in minutes given a distance in km.
+func EstimateTimeMins(distanceKm float64) float64 {
 	if distanceKm <= 0 {
 		return 0
 	}
-	// Estimate with a conservative 35 km/h average speed.
 	return math.Max(15, (distanceKm/35.0)*60.0)
 }
 
-func (ps *PricingService) updateOrderEstimates(orderID uint, feeCents int, distanceKm, timeMins float64) error {
+func (ps *PricingService) updateOrderEstimates(orderID uint, feeUnits int, distanceKm, timeMins float64) error {
 	return DB.Model(&Order{}).
 		Where("id = ?", orderID).
 		Updates(map[string]any{
-			"fee_cents":             feeCents,
+			"fee_units":             feeUnits,
 			"estimated_distance_km": distanceKm,
 			"estimated_time_mins":   timeMins,
 			"currency":              "NGN",
