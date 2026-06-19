@@ -2042,8 +2042,8 @@ func migrateExpiryDateColumns() {
 }
 
 func InitDB() {
-	// Load .env ONLY in local development
-	if os.Getenv("RENDER") == "" {
+	// Load .env ONLY in local development (not when running in production)
+	if os.Getenv("RAILWAY_ENVIRONMENT") == "" && os.Getenv("RENDER") == "" {
 		_ = godotenv.Load()
 	}
 
