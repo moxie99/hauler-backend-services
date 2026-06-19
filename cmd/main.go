@@ -21,11 +21,11 @@ func main() {
 	r := gin.Default()
 
 	// CORS configuration
-	// In production (RENDER is set), only allow the admin frontend
-	// In development, allow localhost:3000
+	// Set ALLOWED_ORIGINS env var in production (comma-separated if multiple)
+	// Falls back to localhost:3000 for local development
 	var allowedOrigins []string
-	if os.Getenv("RENDER") != "" {
-		allowedOrigins = []string{"https://hauler-admin-page.onrender.com"}
+	if origins := os.Getenv("ALLOWED_ORIGINS"); origins != "" {
+		allowedOrigins = strings.Split(origins, ",")
 	} else {
 		allowedOrigins = []string{"http://localhost:3000"}
 	}
