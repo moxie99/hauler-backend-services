@@ -13,6 +13,11 @@
 *.out
 go.work
 
+# Compiled binaries (no extension)
+hauler-backend
+server
+main
+
 # Go workspace file
 go.work.sum
 
